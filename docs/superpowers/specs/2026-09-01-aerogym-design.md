@@ -43,7 +43,12 @@ Three layers, each importable and testable on its own:
    (`properties.py`), drives `FGFDMExec` (`simulator.py`), and streams
    native-FDM packets to FlightGear over UDP via a generated JSBSim output
    directive, optionally launching `fgfs` with `--fdm=null
-   --native-fdm=socket,in,<rate>,,<port>,udp` (`flightgear.py`).
+   --native-fdm=socket,in,<rate>,,<port>,udp` (`flightgear.py`). The launch
+   is deferred to the first `reset()`, which passes the scenario's initial
+   position (`--lat/--lon/--heading`) and blocks until FlightGear reports
+   `/sim/sceneryloaded` over its telnet server, so episodes only start once
+   the viewer can actually show them; on timeout it warns and continues
+   headless.
 
 ## Data flow
 

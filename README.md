@@ -17,7 +17,10 @@ with optional live [FlightGear](https://www.flightgear.org/) visualization.
   can be added without touching the env or scenarios.
 - **FlightGear visualization** — while JSBSim runs, simulation frames are
   streamed to FlightGear over UDP (native FDM protocol) so you can watch the
-  agent fly in real time.
+  agent fly in real time. The first `reset()` launches FlightGear at the
+  scenario's initial position and blocks until its scenery has finished
+  loading (polled via the FlightGear telnet server, port 5401 by default),
+  so the episode never starts before you can see it.
 
 ## Installation
 

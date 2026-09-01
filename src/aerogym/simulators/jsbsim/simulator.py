@@ -34,6 +34,7 @@ class JSBSimSimulator(Simulator):
         self._fdm = None
         self._aircraft: str | None = None
         self._viewer: FlightGearViewer | None = None
+        self._viewer_synced = False
         self._visualization: dict[str, object] | None = None
         self._directive_path: Path | None = None
 
@@ -42,8 +43,15 @@ class JSBSimSimulator(Simulator):
         return self._dt
 
     def reset(self, scenario: Scenario) -> None:
-        fdm = self._ensure_fdm(scenario.aircraft)
         ic = scenario.initial_conditions
+        if self._viewer is not None:
+            # Launch first so FlightGear boots while we set up the FDM.
+            self._viewer.launch(
+                lat_deg=ic.latitude_deg,
+                lon_deg=ic.longitude_deg,
+                heading_deg=ic.heading_deg,
+            )
+        fdm = self._ensure_fdm(scenario.aircraft)
         fdm["ic/lat-geod-deg"] = ic.latitude_deg
         fdm["ic/long-gc-deg"] = ic.longitude_deg
         fdm["ic/h-sl-ft"] = ic.altitude_m * M_TO_FT
@@ -61,6 +69,12 @@ class JSBSimSimulator(Simulator):
         fdm["propulsion/set-running"] = -1
         fdm["fcs/mixture-cmd-norm"] = 1.0
         fdm["fcs/throttle-cmd-norm"] = 0.7
+        if self._viewer is not None and not self._viewer_synced:
+            # Don't start the episode while FlightGear is still on its splash
+            # screen — nothing would be visualized. Warns and proceeds headless
+            # if FlightGear never becomes ready.
+            self._viewer.wait_until_ready()
+            self._viewer_synced = True
 
     def set_control(self, var: FlightVariable, value: float) -> None:
         mapping = CONTROL_MAP[var]
@@ -94,18 +108,20 @@ class JSBSimSimulator(Simulator):
         if self._fdm is not None:
             self._apply_output_directive()
         if launch_flightgear and self._viewer is None:
+            # The actual launch is deferred to reset(), where the scenario's
+            # initial position is known and readiness can be awaited.
             self._viewer = FlightGearViewer(
                 port=port,
                 rate_hz=rate_hz,
                 aircraft=flightgear_aircraft,
                 **viewer_kwargs,  # type: ignore[arg-type]
             )
-            self._viewer.launch()
 
     def close(self) -> None:
         if self._viewer is not None:
             self._viewer.close()
             self._viewer = None
+            self._viewer_synced = False
         self._fdm = None
         if self._directive_path is not None:
             self._directive_path.unlink(missing_ok=True)

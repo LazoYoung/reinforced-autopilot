@@ -1,0 +1,26 @@
+[project]
+name = "aerogym"
+version = "0.1.0"
+description = "Simulator-agnostic Gymnasium environments for fixed-wing flight control"
+readme = "README.md"
+authors = [
+    { name = "Chanyeong Park", email = "idealproduction@naver.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium>=1.3.0",
+    "jsbsim>=1.3.1",
+    "numpy>=2.5.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.8,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

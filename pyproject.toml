@@ -1,5 +1,5 @@
 [project]
-name = "aerogym"
+name = "aero-gym"
 version = "0.1.0"
 description = "Simulator-agnostic Gymnasium environments for fixed-wing flight control"
 readme = "README.md"
@@ -18,6 +18,9 @@ dev = [
     "pytest>=9.1.1",
     "uv>=0.12.8",
 ]
+
+[tool.uv.build-backend]
+module-name = "aerogym"
 
 [build-system]
 requires = ["uv_build>=0.12.8,<0.13.0"]

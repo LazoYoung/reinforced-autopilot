@@ -1,4 +1,4 @@
-# AeroGym
+# aero-gym
 
 Simulator-agnostic [Gymnasium](https://gymnasium.farama.org/) environments for
 fixed-wing flight control, backed by [JSBSim](https://jsbsim.sourceforge.net/)

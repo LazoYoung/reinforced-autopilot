@@ -30,9 +30,20 @@ uv sync
 
 JSBSim ships its aircraft/engine data inside the Python wheel — no separate
 install needed. For visualization, install
-[FlightGear](https://www.flightgear.org/download/) and, if `fgfs` is not on
-your `PATH` or in the default install location, point the `AEROGYM_FGFS`
-environment variable at the executable.
+[FlightGear](https://www.flightgear.org/download/). It is found automatically
+on `PATH`, in the default Windows install locations, and in
+`/Applications/FlightGear*.app` or `~/Applications/FlightGear*.app` on macOS.
+Anywhere else, point the `AEROGYM_FGFS` environment variable at the executable
+— or, on macOS, at the `.app` bundle itself:
+
+```sh
+export AEROGYM_FGFS=/Applications/FlightGear.app        # macOS
+```
+
+On macOS the viewer is brought to the front shortly after it starts: a GUI app
+spawned as a subprocess is never activated by LaunchServices, so its window
+stays unordered and App Nap throttles it until it has focus, which stalls
+scenery loading indefinitely.
 
 ## Quick start
 

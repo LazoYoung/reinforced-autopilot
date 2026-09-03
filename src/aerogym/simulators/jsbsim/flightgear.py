@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import glob
 import os
+import plistlib
 import shutil
 import socket
 import subprocess
+import sys
+import threading
 import time
 import warnings
 from collections.abc import Sequence
@@ -21,16 +24,104 @@ _WINDOWS_GLOBS = (
     r"C:\Program Files (x86)\FlightGear*\bin\fgfs.exe",
 )
 
+# macOS ships FlightGear as an application bundle, which is never on PATH.
+_MACOS_APP_GLOBS = (
+    "/Applications/FlightGear*.app",
+    "~/Applications/FlightGear*.app",
+)
+# Release bundles name the binary after the app ("FlightGear"); source builds
+# and older bundles keep the traditional "fgfs".
+_BUNDLE_EXECUTABLE_NAMES = ("fgfs", "FlightGear")
+
+
+def _bundle_info(path: str) -> dict:
+    """Read a macOS ``.app``'s Info.plist, or an empty dict if there isn't one."""
+    try:
+        with open(os.path.join(path, "Contents", "Info.plist"), "rb") as info:
+            return plistlib.load(info)
+    except (OSError, plistlib.InvalidFileException):
+        return {}
+
+
+def _bundle_executable(path: str) -> str | None:
+    """Map a macOS ``.app`` bundle to the FlightGear binary inside it.
+
+    Prefers the name the bundle declares for itself, since neither hard-coded
+    name has held across releases.
+    """
+    declared = _bundle_info(path).get("CFBundleExecutable")
+    names = ([declared] if declared else []) + list(_BUNDLE_EXECUTABLE_NAMES)
+    for name in names:
+        candidate = os.path.join(path, "Contents", "MacOS", name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _containing_bundle(executable: str) -> str | None:
+    """The ``.app`` an executable lives in, if it lives in one."""
+    bundle = os.path.dirname(os.path.dirname(os.path.dirname(executable)))
+    return bundle if bundle.endswith(".app") else None
+
+
+def _lsappinfo_name(specifier: str) -> str:
+    """The display name LaunchServices has for an app, or "" if it has none."""
+    try:
+        out = subprocess.run(
+            ["/usr/bin/lsappinfo", "info", "-only", "name", specifier],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    name = out.partition("=")[2].strip()
+    return name.strip('"') if name.startswith('"') else ""
+
+
+def _frontmost_app_name() -> str:
+    """The display name of the frontmost macOS app, or "" if it can't be read."""
+    try:
+        front = subprocess.run(
+            ["/usr/bin/lsappinfo", "front"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return _lsappinfo_name(front) if front else ""
+
+
+def _activate_bundle(bundle: str, pid: int, attempts: int = 10, interval: float = 3.0) -> None:
+    """Bring a macOS ``.app`` to the front."""
+    name = _bundle_info(bundle).get("CFBundleName") or os.path.basename(bundle)[: -len(".app")]
+    for _ in range(attempts):
+        time.sleep(interval)
+        if not _lsappinfo_name(str(pid)):
+            continue
+        if _frontmost_app_name() == name:
+            return
+        try:
+            subprocess.run(
+                ["/usr/bin/open", "-a", bundle],
+                timeout=10,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return
+
 
 def find_fgfs() -> str | None:
     """Locate the FlightGear executable.
 
     Checks the ``AEROGYM_FGFS`` environment variable, then ``PATH``, then the
-    default Windows install locations (newest version wins).
+    default Windows and macOS install locations (newest version wins). The
+    environment variable may name a macOS ``.app`` bundle as well as a plain
+    executable, since the bundle is what a user actually installs.
     """
     override = os.environ.get("AEROGYM_FGFS")
     if override:
-        return override
+        return _bundle_executable(override) or override
     on_path = shutil.which("fgfs")
     if on_path:
         return on_path
@@ -38,6 +129,11 @@ def find_fgfs() -> str | None:
         matches = sorted(glob.glob(pattern))
         if matches:
             return matches[-1]
+    for pattern in _MACOS_APP_GLOBS:
+        for bundle in sorted(glob.glob(os.path.expanduser(pattern)), reverse=True):
+            executable = _bundle_executable(bundle)
+            if executable:
+                return executable
     return None
 
 
@@ -81,7 +177,8 @@ class FlightGearViewer:
             warnings.warn(
                 "FlightGear executable not found; running without visualization. "
                 "Install FlightGear and/or set the AEROGYM_FGFS environment "
-                "variable to the full path of fgfs(.exe).",
+                "variable to the full path of fgfs(.exe), or of FlightGear.app "
+                "on macOS.",
                 stacklevel=2,
             )
             return False
@@ -102,8 +199,18 @@ class FlightGearViewer:
         if self.aircraft:
             args.append(f"--aircraft={self.aircraft}")
         args.extend(self.extra_args)
-        # cwd=bin dir so the FlightGear installation finds its own data on Windows.
-        self._process = subprocess.Popen(args, cwd=os.path.dirname(exe) or None)
+        # Windows builds resolve their data directory relative to the working
+        # directory, so run from the bin dir there; elsewhere the install
+        # locates itself and the caller's cwd is the less surprising choice.
+        cwd = (os.path.dirname(exe) or None) if os.name == "nt" else None
+        self._process = subprocess.Popen(args, cwd=cwd)
+        bundle = _containing_bundle(exe) if sys.platform == "darwin" else None
+        if bundle is not None:
+            # Off the hot path: FlightGear needs a window before it will load
+            # scenery, and nothing else will give it one. See _activate_bundle.
+            threading.Thread(
+                target=_activate_bundle, args=(bundle, self._process.pid), daemon=True
+            ).start()
         return True
 
     def wait_until_ready(

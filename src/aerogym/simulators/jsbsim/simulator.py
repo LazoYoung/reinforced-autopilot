@@ -6,9 +6,9 @@ import math
 import tempfile
 from pathlib import Path
 
-from ...scenario import Scenario
-from ...simulator import Simulator, SimulatorError
-from ...variables import FlightVariable
+from aerogym.scenario import Scenario
+from aerogym.simulator import Simulator, SimulatorError
+from aerogym.variables import FlightVariable
 from .flightgear import FlightGearViewer
 from .properties import CONTROL_MAP, OBSERVATION_MAP
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ..scenario import InitialConditions, Scenario, Transition
-from ..variables import (
+from aerogym.scenario import InitialConditions, Scenario, Transition
+from aerogym.variables import (
     ALL_ACTION_VARIABLES,
     ALL_OBSERVATION_VARIABLES,
     FlightVariable as V,

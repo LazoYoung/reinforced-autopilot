@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from ...variables import FlightVariable
+from aerogym.variables import FlightVariable
 
 FT_TO_M = 0.3048
 RAD_TO_DEG = math.degrees(1.0)

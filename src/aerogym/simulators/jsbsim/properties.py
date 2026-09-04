@@ -1,7 +1,7 @@
 """Mapping between canonical flight variables and JSBSim properties.
 
 Conversions bring JSBSim's imperial/radian outputs to the canonical units
-(degrees, deg/s, metres, m/s) and JSBSim's control sign conventions to the
+(degrees, deg/s, feet, fpm) and JSBSim's control sign conventions to the
 pilot convention (+elevator = pitch up, +rudder = yaw right): JSBSim's
 positive elevator command pitches the nose down and its positive rudder
 command yaws the nose left, so both are negated; ailerons already match.
@@ -15,7 +15,7 @@ from typing import Callable
 
 from aerogym.variables import FlightVariable
 
-FT_TO_M = 0.3048
+FPS_TO_FPM = 60.0
 RAD_TO_DEG = math.degrees(1.0)
 
 
@@ -29,8 +29,8 @@ def _identity(x: float) -> float:
     return x
 
 
-def _ft_to_m(x: float) -> float:
-    return x * FT_TO_M
+def _fps_to_fpm(x: float) -> float:
+    return x * FPS_TO_FPM
 
 
 def _rad_s_to_deg_s(x: float) -> float:
@@ -43,8 +43,8 @@ def _wrap_360(x: float) -> float:
 
 OBSERVATION_MAP: dict[FlightVariable, ObservationMapping] = {
     FlightVariable.HEADING: ObservationMapping("attitude/psi-deg", _wrap_360),
-    FlightVariable.ALTITUDE: ObservationMapping("position/h-sl-ft", _ft_to_m),
-    FlightVariable.VERTICAL_SPEED: ObservationMapping("velocities/h-dot-fps", _ft_to_m),
+    FlightVariable.ALTITUDE: ObservationMapping("position/h-sl-ft", _identity),
+    FlightVariable.VERTICAL_SPEED: ObservationMapping("velocities/h-dot-fps", _fps_to_fpm),
     FlightVariable.PITCH: ObservationMapping("attitude/theta-deg", _identity),
     FlightVariable.ROLL: ObservationMapping("attitude/phi-deg", _identity),
     FlightVariable.YAW: ObservationMapping("attitude/psi-deg", _wrap_360),

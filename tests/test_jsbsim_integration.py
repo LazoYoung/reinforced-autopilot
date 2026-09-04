@@ -24,7 +24,7 @@ def env():
 def test_reset_honours_initial_conditions(env):
     _, info = env.reset(seed=0)
     obs = info["obs"]
-    assert obs[V.ALTITUDE] == pytest.approx(1500.0, abs=2.0)
+    assert obs[V.ALTITUDE] == pytest.approx(5000.0, abs=7.0)
     assert obs[V.HEADING] == pytest.approx(270.0, abs=1.0)
     assert abs(obs[V.ROLL]) < 1.0
 
@@ -41,7 +41,7 @@ def test_trimmed_flight_stays_in_envelope(env):
             break
     obs = info["obs"]
     assert not terminated, f"left the flight envelope: {obs}"
-    assert obs[V.ALTITUDE] > 1000.0
+    assert obs[V.ALTITUDE] > 4000.0
 
 
 def test_controls_have_canonical_sign(env):

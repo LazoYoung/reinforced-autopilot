@@ -24,7 +24,7 @@ class InitialConditions:
 
     latitude_deg: float
     longitude_deg: float
-    altitude_m: float
+    altitude_ft: float
     heading_deg: float
     pitch_deg: float = 0.0
     roll_deg: float = 0.0

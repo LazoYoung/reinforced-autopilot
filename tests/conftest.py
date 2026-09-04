@@ -25,7 +25,7 @@ class FakeSimulator(Simulator):
 
     def reset(self, scenario: Scenario) -> None:
         self.reset_calls.append(scenario)
-        self.state[V.ALTITUDE] = scenario.initial_conditions.altitude_m
+        self.state[V.ALTITUDE] = scenario.initial_conditions.altitude_ft
         self.state[V.HEADING] = scenario.initial_conditions.heading_deg
 
     def set_control(self, var: V, value: float) -> None:
@@ -53,7 +53,7 @@ def initial_conditions() -> InitialConditions:
     return InitialConditions(
         latitude_deg=37.6191,
         longitude_deg=-122.3816,
-        altitude_m=1500.0,
+        altitude_ft=5000.0,
         heading_deg=270.0,
         airspeed_kts=95.0,
     )

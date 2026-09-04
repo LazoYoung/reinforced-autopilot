@@ -30,7 +30,7 @@ def test_reset_applies_scenario_and_returns_obs(scenario, fake_simulator):
     assert fake_simulator.reset_calls == [scenario]
     assert obs.shape == env.observation_space.shape
     alt_index = scenario.observation_variables.index(V.ALTITUDE)
-    assert obs[alt_index] == pytest.approx(1500.0)
+    assert obs[alt_index] == pytest.approx(5000.0)
     assert info["obs"][V.HEADING] == pytest.approx(270.0)
 
 
@@ -76,7 +76,7 @@ def test_reward_fn_receives_transition(initial_conditions, fake_simulator):
     (t,) = seen
     assert set(t.obs) == set(scenario.observation_variables)
     assert set(t.action) == set(scenario.action_variables)
-    assert t.prev_obs[V.ALTITUDE] == pytest.approx(1500.0)
+    assert t.prev_obs[V.ALTITUDE] == pytest.approx(5000.0)
 
 
 def test_step_before_reset_raises(scenario, fake_simulator):

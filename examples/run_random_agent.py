@@ -46,9 +46,9 @@ def main() -> None:
             o = info["obs"]
             print(
                 f"t={step / scenario.agent_hz:5.1f}s "
-                f"alt={o[FlightVariable.ALTITUDE]:7.1f} m "
+                f"alt={o[FlightVariable.ALTITUDE]:7.1f} ft "
                 f"hdg={o[FlightVariable.HEADING]:6.1f} deg "
-                f"vs={o[FlightVariable.VERTICAL_SPEED]:+6.2f} m/s "
+                f"vs={o[FlightVariable.VERTICAL_SPEED]:+7.1f} fpm "
                 f"pitch={o[FlightVariable.PITCH]:+6.2f} roll={o[FlightVariable.ROLL]:+6.2f} "
                 f"aoa={o[FlightVariable.AOA]:+5.2f} reward={reward:+7.2f}"
             )

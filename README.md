@@ -6,44 +6,19 @@ with optional live [FlightGear](https://www.flightgear.org/) visualization.
 
 ## Features
 
-- **Scenario customization** — each `Scenario` selects which control axes
-  (elevator, aileron, rudder, throttle) and which observations (heading,
-  altitude, vertical speed, pitch, roll, yaw, angular rates, AoA, AoS) the
-  agent sees, defines the reward function, the initial flight condition
-  (lat, lon, altitude, heading, pitch, bank), and the aircraft model
-  (`c172p` by default).
-- **Simulator-agnostic core** — the Gymnasium env talks to an abstract
-  `Simulator` interface; JSBSim is the first backend, others (e.g. X-Plane)
-  can be added without touching the env or scenarios.
-- **FlightGear visualization** — while JSBSim runs, simulation frames are
-  streamed to FlightGear over UDP (native FDM protocol) so you can watch the
-  agent fly in real time. The first `reset()` launches FlightGear at the
-  scenario's initial position and blocks until its scenery has finished
-  loading (polled via the FlightGear telnet server, port 5401 by default),
-  so the episode never starts before you can see it.
+- **Scenario customization**: each `Scenario` selects which control axes and observations the agent sees, defines the reward function, the initial flight condition, and the aircraft model.
+- **Simulator-agnostic core**: the Gymnasium env talks to `Simulator` interface which abstracts the backend simulator instance.
+- **FlightGear visualization**: JSBSim simulation frames are streamed to FlightGear over UDP, so you can watch the agent fly in real time.
 
 ## Installation
+
+> This project requires [uv](https://docs.astral.sh/uv/) package manager. [Install uv](https://docs.astral.sh/uv/getting-started/installation/) before you proceed.
 
 ```sh
 uv sync
 ```
 
-JSBSim ships its aircraft/engine data inside the Python wheel — no separate
-install needed. For visualization, install
-[FlightGear](https://www.flightgear.org/download/). It is found automatically
-on `PATH`, in the default Windows install locations, and in
-`/Applications/FlightGear*.app` or `~/Applications/FlightGear*.app` on macOS.
-Anywhere else, point the `AEROGYM_FGFS` environment variable at the executable
-— or, on macOS, at the `.app` bundle itself:
-
-```sh
-export AEROGYM_FGFS=/Applications/FlightGear.app        # macOS
-```
-
-On macOS the viewer is brought to the front shortly after it starts: a GUI app
-spawned as a subprocess is never activated by LaunchServices, so its window
-stays unordered and App Nap throttles it until it has focus, which stalls
-scenery loading indefinitely.
+The python wheel includes the JBSim simulator backend.
 
 ## Quick start
 
@@ -62,11 +37,13 @@ for _ in range(100):
 env.close()
 ```
 
-Or run the bundled example (add `--flightgear` to watch it):
+Or run the bundled example script:
 
 ```sh
 uv run examples/run_random_agent.py --flightgear
 ```
+
+To use `--flightgear` to visualize the agent, install [FlightGear](https://www.flightgear.org/download/).
 
 ## Defining a scenario
 
@@ -76,13 +53,13 @@ from aerogym.variables import FlightVariable as V
 
 def my_reward(t):  # t: Transition(prev_obs, obs, action) — dicts keyed by FlightVariable
     reward = -abs(t.obs[V.ROLL]) / 60.0
-    terminated = t.obs[V.ALTITUDE] < 300.0
+    terminated = t.obs[V.ALTITUDE] < 1000.0
     return reward, terminated
 
 scenario = Scenario(
     name="wings-level",
     initial_conditions=InitialConditions(
-        latitude_deg=37.62, longitude_deg=-122.38, altitude_m=1500.0,
+        latitude_deg=37.62, longitude_deg=-122.38, altitude_ft=5000.0,
         heading_deg=270.0, pitch_deg=0.0, roll_deg=20.0, airspeed_kts=95.0,
     ),
     action_variables=(V.AILERON, V.RUDDER),
@@ -93,18 +70,21 @@ scenario = Scenario(
 )
 ```
 
-Units are canonical across all simulator backends: degrees for angles,
-deg/s for rates, metres for altitude, m/s for vertical speed. Controls use
-the pilot convention: +elevator = pitch up, +aileron = roll right,
-+rudder = yaw right, throttle in [0, 1].
+Units are canonical across all simulator backends.
+
+|Flight variable|Unit|
+|---------------|----|
+| Angle | Degrees |
+| Angle rate | deg/s |
+| Altitude | feet |
+| Vertical speed | fpm |
+| Elevator | + for Pitch Up |
+| Aileron | + for Roll Right |
+| Rudder | + for Yaw Right |
+| Throttle | [0, 1] |
 
 ## Testing
 
 ```sh
 uv run pytest
 ```
-
-## Scope
-
-RL algorithms are intentionally not included yet — this stage is about
-verifying the integrity of the simulator interaction loop.

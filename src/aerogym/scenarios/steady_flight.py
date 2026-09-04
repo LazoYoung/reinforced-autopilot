@@ -18,7 +18,7 @@ def heading_error_deg(current: float, target: float) -> float:
 def make_steady_flight_scenario(
     latitude_deg: float = 37.6191,
     longitude_deg: float = -122.3816,
-    altitude_m: float = 1500.0,
+    altitude_ft: float = 5000.0,
     heading_deg: float = 270.0,
     airspeed_kts: float = 95.0,
     aircraft: str = "c172p",
@@ -31,20 +31,20 @@ def make_steady_flight_scenario(
     heading with wings level; each error term subtracts proportionally. The
     episode terminates when the aircraft leaves a safe flight envelope.
     """
-    target_altitude_m = altitude_m
+    target_altitude_ft = altitude_ft
     target_heading_deg = heading_deg % 360.0
 
     def reward_fn(t: Transition) -> tuple[float, bool]:
         obs = t.obs
-        altitude_err = abs(obs[V.ALTITUDE] - target_altitude_m)
+        altitude_err = abs(obs[V.ALTITUDE] - target_altitude_ft)
         heading_err = abs(heading_error_deg(obs[V.HEADING], target_heading_deg))
         reward = -(
-            altitude_err / 100.0
+            altitude_err / 300.0
             + heading_err / 45.0
             + abs(obs[V.ROLL]) / 60.0
         )
         terminated = (
-            obs[V.ALTITUDE] < 300.0
+            obs[V.ALTITUDE] < 1000.0
             or abs(obs[V.ROLL]) > 75.0
             or abs(obs[V.PITCH]) > 45.0
             or abs(obs[V.AOA]) > 20.0
@@ -56,7 +56,7 @@ def make_steady_flight_scenario(
         initial_conditions=InitialConditions(
             latitude_deg=latitude_deg,
             longitude_deg=longitude_deg,
-            altitude_m=altitude_m,
+            altitude_ft=altitude_ft,
             heading_deg=heading_deg,
             pitch_deg=0.0,
             roll_deg=0.0,

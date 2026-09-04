@@ -12,8 +12,6 @@ from aerogym.variables import FlightVariable
 from .flightgear import FlightGearViewer
 from .properties import CONTROL_MAP, OBSERVATION_MAP
 
-M_TO_FT = 1.0 / 0.3048
-
 _OUTPUT_DIRECTIVE = (
     '<?xml version="1.0"?>\n'
     '<output name="{host}" type="FLIGHTGEAR" port="{port}" protocol="UDP" rate="{rate}"/>\n'
@@ -54,7 +52,7 @@ class JSBSimSimulator(Simulator):
         fdm = self._ensure_fdm(scenario.aircraft)
         fdm["ic/lat-geod-deg"] = ic.latitude_deg
         fdm["ic/long-gc-deg"] = ic.longitude_deg
-        fdm["ic/h-sl-ft"] = ic.altitude_m * M_TO_FT
+        fdm["ic/h-sl-ft"] = ic.altitude_ft
         fdm["ic/psi-true-deg"] = ic.heading_deg % 360.0
         fdm["ic/theta-deg"] = ic.pitch_deg
         fdm["ic/phi-deg"] = ic.roll_deg

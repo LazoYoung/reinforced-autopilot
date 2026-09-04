@@ -4,7 +4,7 @@ All simulators express these variables in the same canonical units so that
 scenarios and trained agents are portable across backends:
 
 - angles in degrees, angular rates in deg/s
-- altitude in metres (MSL), vertical speed in m/s
+- altitude in feet (MSL), vertical speed in feet per minute
 - controls normalized to [-1, 1] ([0, 1] for throttle), pilot convention:
   +elevator = pitch up, +aileron = roll right, +rudder = yaw right
 """
@@ -54,8 +54,8 @@ ACTION_SPECS: dict[FlightVariable, VariableSpec] = {
 
 OBSERVATION_SPECS: dict[FlightVariable, VariableSpec] = {
     FlightVariable.HEADING: VariableSpec("deg", 0.0, 360.0, "true heading"),
-    FlightVariable.ALTITUDE: VariableSpec("m", -500.0, 26000.0, "altitude above mean sea level"),
-    FlightVariable.VERTICAL_SPEED: VariableSpec("m/s", -200.0, 200.0, "climb rate, + = up"),
+    FlightVariable.ALTITUDE: VariableSpec("ft", -1500.0, 85000.0, "altitude above mean sea level"),
+    FlightVariable.VERTICAL_SPEED: VariableSpec("fpm", -40000.0, 40000.0, "climb rate, + = up"),
     FlightVariable.PITCH: VariableSpec("deg", -90.0, 90.0, "pitch attitude, + = nose up"),
     FlightVariable.ROLL: VariableSpec("deg", -180.0, 180.0, "bank angle, + = right wing down"),
     FlightVariable.YAW: VariableSpec("deg", 0.0, 360.0, "yaw (true heading of the body x-axis)"),

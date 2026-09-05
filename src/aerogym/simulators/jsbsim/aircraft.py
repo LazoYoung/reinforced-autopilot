@@ -15,15 +15,6 @@ CockpitFn = Callable[[object, dict[str, float]], dict[str, object]]
 """Builds aircraft-specific cockpit writes from the FDM and the pilot controls."""
 
 
-def _default_startup() -> dict[str, float]:
-    """Engine controls for an aircraft aerogym knows nothing else about.
-
-    Piston-shaped, because a turbine ignores mixture but a piston without it
-    will not make power. An unlisted aircraft is better off flying.
-    """
-    return {"fcs/mixture-cmd-norm": 1.0, "fcs/throttle-cmd-norm": 0.7}
-
-
 @dataclass(frozen=True)
 class AircraftProfile:
     """Everything aerogym knows about one JSBSim aircraft model."""
@@ -31,7 +22,7 @@ class AircraftProfile:
     flightgear: str
     cruise_altitude_ft: float = 5000.0
     cruise_airspeed_kts: float = 95.0
-    startup: dict[str, float] = field(default_factory=_default_startup)
+    startup: dict[str, float] = {}
     cockpit: CockpitFn | None = None
     mirrors: tuple[tuple[str, str], ...] = ()
     republish: tuple[str, ...] = ()
@@ -85,6 +76,11 @@ PROFILES: dict[str, AircraftProfile] = {
         flightgear="c172p",
         cruise_altitude_ft=5000.0,
         cruise_airspeed_kts=95.0,
+        startup={
+            "fcs/mixture-cmd-norm": 1.0,
+            "fcs/throttle-cmd-norm": 0.7,
+            "fcs/pitch-trim-cmd-norm": 0.2,
+        },
         cockpit=_c172p_cockpit,
         # c172p routes its pressure instruments through a dead JSBSim static
         # source; point them at the pressure FlightGear still computes itself.

@@ -27,6 +27,26 @@ _BUNDLE_EXECUTABLE_NAMES = ("fgfs", "FlightGear")
 _PROPERTY_SERVER_HZ = 60
 
 
+def _fg_home() -> str:
+    """FlightGear's per-user data directory, where its launcher installs add-ons."""
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/FlightGear")
+    if os.name == "nt":
+        return os.path.join(os.environ.get("APPDATA", ""), "flightgear.org")
+    return os.path.expanduser("~/.fgfs")
+
+
+def find_aircraft_paths() -> list[str]:
+    """Add-on aircraft catalogs installed by FlightGear's launcher.
+
+    Only the launcher knows about these; ``fgfs`` started from a shell searches
+    its own data directory and nothing else, so an add-on aircraft is invisible
+    to ``--aircraft`` unless each catalog is named with ``--fg-aircraft``.
+    """
+    pattern = os.path.join(_fg_home(), "Aircraft", "*", "Aircraft")
+    return sorted(path for path in glob.glob(pattern) if os.path.isdir(path))
+
+
 def _bundle_info(path: str) -> dict:
     """Read a macOS ``.app``'s Info.plist, or an empty dict if there isn't one."""
     try:
@@ -234,6 +254,7 @@ class FlightGearViewer:
             args.append(f"--lon={lon_deg}")
         if heading_deg is not None:
             args.append(f"--heading={heading_deg}")
+        args.extend(f"--fg-aircraft={path}" for path in find_aircraft_paths())
         if self.aircraft:
             args.append(f"--aircraft={self.aircraft}")
         args.extend(self.extra_args)

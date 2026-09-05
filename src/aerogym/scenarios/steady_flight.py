@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aerogym.scenario import InitialConditions, Scenario, Transition
+from aerogym.simulators.jsbsim.aircraft import profile_for
 from aerogym.variables import (
     ALL_ACTION_VARIABLES,
     ALL_OBSERVATION_VARIABLES,
@@ -18,9 +19,9 @@ def heading_error_deg(current: float, target: float) -> float:
 def make_steady_flight_scenario(
     latitude_deg: float = 37.6191,
     longitude_deg: float = -122.3816,
-    altitude_ft: float = 5000.0,
+    altitude_ft: float | None = None,
     heading_deg: float = 270.0,
-    airspeed_kts: float = 95.0,
+    airspeed_kts: float | None = None,
     aircraft: str = "c172p",
     agent_hz: float = 10.0,
     max_episode_steps: int | None = 2000,
@@ -30,7 +31,15 @@ def make_steady_flight_scenario(
     Reward is highest (0) when the aircraft keeps the target altitude and
     heading with wings level; each error term subtracts proportionally. The
     episode terminates when the aircraft leaves a safe flight envelope.
+
+    Altitude and airspeed default to a cruise the chosen aircraft can hold, so
+    that naming an aircraft is enough to get a flyable task.
     """
+    profile = profile_for(aircraft)
+    if altitude_ft is None:
+        altitude_ft = profile.cruise_altitude_ft
+    if airspeed_kts is None:
+        airspeed_kts = profile.cruise_airspeed_kts
     target_altitude_ft = altitude_ft
     target_heading_deg = heading_deg % 360.0
 

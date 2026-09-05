@@ -60,11 +60,17 @@ OBSERVATION_MAP: dict[FlightVariable, ObservationMapping] = {
 class ControlMapping:
     prop: str
     sign: float
+    per_engine: bool = False
+    """Whether one command in the action space drives every engine.
+
+    JSBSim's bare ``fcs/throttle-cmd-norm`` is engine 0 alone, so on a
+    multi-engine aircraft the rest would never hear the agent.
+    """
 
 
 CONTROL_MAP: dict[FlightVariable, ControlMapping] = {
     FlightVariable.ELEVATOR: ControlMapping("fcs/elevator-cmd-norm", -1.0),
     FlightVariable.AILERON: ControlMapping("fcs/aileron-cmd-norm", 1.0),
     FlightVariable.RUDDER: ControlMapping("fcs/rudder-cmd-norm", -1.0),
-    FlightVariable.THROTTLE: ControlMapping("fcs/throttle-cmd-norm", 1.0),
+    FlightVariable.THROTTLE: ControlMapping("fcs/throttle-cmd-norm", 1.0, per_engine=True),
 }

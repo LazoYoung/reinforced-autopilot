@@ -9,6 +9,7 @@ from pathlib import Path
 from aerogym.scenario import Scenario
 from aerogym.simulator import Simulator, SimulatorError
 from aerogym.variables import FlightVariable
+from .aircraft import profile_for
 from .cockpit import CockpitSync
 from .flightgear import FlightGearViewer
 from .properties import CONTROL_MAP, OBSERVATION_MAP
@@ -32,6 +33,7 @@ class JSBSimSimulator(Simulator):
         self._root_dir = root_dir
         self._fdm = None
         self._aircraft: str | None = None
+        self._engines = 1
         self._viewer: FlightGearViewer | None = None
         self._viewer_synced = False
         self._visualization: dict[str, object] | None = None
@@ -43,7 +45,12 @@ class JSBSimSimulator(Simulator):
 
     def reset(self, scenario: Scenario) -> None:
         ic = scenario.initial_conditions
+        profile = profile_for(scenario.aircraft)
         if self._viewer is not None:
+            if self._viewer.aircraft is None:
+                # Otherwise FlightGear renders whatever it defaults to, which
+                # has nothing to do with the aircraft JSBSim is flying.
+                self._viewer.aircraft = profile.flightgear
             # Launch first so FlightGear boots while we set up the FDM.
             self._viewer.launch(
                 lat_deg=ic.latitude_deg,
@@ -63,11 +70,11 @@ class JSBSimSimulator(Simulator):
         fdm["ic/r-rad_sec"] = 0.0
         if not fdm.run_ic():
             raise SimulatorError("JSBSim failed to initialize the requested flight condition")
-        # Start with the engine(s) running and sensible engine controls so the
-        # aircraft is flyable from the first step.
+        # Start with the engine(s) running and the aircraft's own controls set,
+        # so it is flyable from the first step.
         fdm["propulsion/set-running"] = -1
-        fdm["fcs/mixture-cmd-norm"] = 1.0
-        fdm["fcs/throttle-cmd-norm"] = 0.7
+        for prop, value in profile.startup.items():
+            fdm[prop] = value
         if self._viewer is not None and not self._viewer_synced:
             # Don't start the episode while FlightGear is still on its splash
             # screen — nothing would be visualized. Warns and proceeds headless
@@ -79,19 +86,28 @@ class JSBSimSimulator(Simulator):
     def _start_cockpit_sync(self, fdm) -> None:
         """Supply the cockpit state FlightGear's disabled flight model can't.
 
-        Keyed on the aircraft FlightGear actually loaded, which the caller may
-        have overridden.
+        Keyed on the JSBSim model, checked against what FlightGear says it
+        loaded, since the caller may have pointed it at a different aircraft.
         """
         assert self._viewer is not None
-        aircraft = self._viewer.get_property("/sim/aircraft") or self._aircraft
-        sync = CockpitSync(fdm, aircraft)
+        sync = CockpitSync(
+            fdm,
+            self._aircraft,
+            flightgear_aircraft=self._viewer.get_property("/sim/aircraft"),
+        )
         self._viewer.start_property_sync(
             sync.properties, sync.mirrors, initial=sync.initial_properties()
         )
 
     def set_control(self, var: FlightVariable, value: float) -> None:
         mapping = CONTROL_MAP[var]
-        self._require_fdm()[mapping.prop] = mapping.sign * value
+        fdm = self._require_fdm()
+        value = mapping.sign * value
+        if mapping.per_engine:
+            for i in range(self._engines):
+                fdm[f"{mapping.prop}[{i}]"] = value
+        else:
+            fdm[mapping.prop] = value
 
     def run(self) -> None:
         fdm = self._require_fdm()
@@ -155,6 +171,7 @@ class JSBSimSimulator(Simulator):
                 raise SimulatorError(f"JSBSim could not load aircraft model {aircraft!r}")
             self._fdm = fdm
             self._aircraft = aircraft
+            self._engines = fdm.get_propulsion().get_num_engines()
             if self._visualization is not None:
                 self._apply_output_directive()
         return self._fdm

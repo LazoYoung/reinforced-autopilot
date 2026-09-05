@@ -2,6 +2,7 @@
 
 Run headless:            uv run examples/run_random_agent.py
 With FlightGear viewer:  uv run examples/run_random_agent.py --flightgear
+Fly a different type:    uv run examples/run_random_agent.py --aircraft 737
 """
 
 from __future__ import annotations
@@ -12,15 +13,19 @@ import numpy as np
 
 from aerogym import AeroGymEnv, FlightVariable
 from aerogym.scenarios import make_steady_flight_scenario
+from aerogym.simulators.jsbsim.aircraft import profile_for
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--flightgear", action="store_true", help="launch FlightGear viewer")
     parser.add_argument("--seconds", type=float, default=60.0, help="episode length to fly")
+    parser.add_argument(
+        "--aircraft", default="c172p", help="JSBSim aircraft model, e.g. c172p or 737"
+    )
     args = parser.parse_args()
 
-    scenario = make_steady_flight_scenario()
+    scenario = make_steady_flight_scenario(aircraft=args.aircraft)
     env = AeroGymEnv(scenario, render_mode="flightgear" if args.flightgear else None)
     rng = np.random.default_rng(0)
 
@@ -28,11 +33,16 @@ def main() -> None:
     print(f"scenario: {scenario.name} | aircraft: {scenario.aircraft} | agent rate: {scenario.agent_hz} Hz")
 
     # Roughly-trimmed baseline controls with small random perturbations on top.
+    # An aircraft whose profile sets pitch trim is already trimmed for cruise
+    # and needs no standing elevator; one without it holds the nose up itself.
+    startup = profile_for(scenario.aircraft).startup
     baseline = {
-        FlightVariable.ELEVATOR: 0.05,
+        FlightVariable.ELEVATOR: 0.0 if "fcs/pitch-trim-cmd-norm" in startup else 0.05,
         FlightVariable.AILERON: 0.0,
         FlightVariable.RUDDER: 0.0,
-        FlightVariable.THROTTLE: 0.7,
+        FlightVariable.THROTTLE: startup.get(
+            "fcs/throttle-cmd-norm", startup.get("fcs/throttle-cmd-norm[0]", 0.7)
+        ),
     }
     n_steps = int(args.seconds * scenario.agent_hz)
     total_reward = 0.0

@@ -144,3 +144,107 @@ def test_c172p_mirrors_its_static_source_from_flightgears_own_pressure():
     assert CockpitSync(_fdm(), "c172p").mirrors == (
         ("/systems/static-pressure-inhg-selected", "/environment/pressure-inhg"),
     )
+
+
+def _b737_fdm(**overrides: float) -> _FakeFDM:
+    """A stand-in shaped like JSBSim's stock 737: two engines, three tanks."""
+    values = {
+        "fcs/elevator-cmd-norm": 0.1,
+        "fcs/aileron-cmd-norm": 0.0,
+        "fcs/rudder-cmd-norm": 0.0,
+        "fcs/flap-pos-norm": 0.25,
+        "fcs/flap-cmd-norm": 0.25,
+        "fcs/speedbrake-cmd-norm": 0.4,
+        "fcs/speedbrake-pos-norm": 0.4,
+        "fcs/pitch-trim-cmd-norm": -0.2,
+        "fcs/throttle-cmd-norm[0]": 0.85,
+        "fcs/throttle-cmd-norm[1]": 0.85,
+        "fcs/throttle-pos-norm[0]": 0.85,
+        "fcs/throttle-pos-norm[1]": 0.85,
+        "velocities/mach": 0.78,
+        "velocities/vg-fps": 780.0,
+        "atmosphere/a-fps": 995.0,
+        "inertia/weight-lbs": 83000.0,
+        "position/h-agl-ft": 29500.0,
+        "gear/unit[0]/WOW": 0.0,
+        "gear/unit[1]/WOW": 0.0,
+        "gear/unit[2]/WOW": 0.0,
+        "propulsion/tank[0]/contents-lbs": 10000.0,
+        "propulsion/tank[0]/pct-full": 98.0,
+    }
+    values.update(overrides)
+    return _FakeFDM(values, engines=2)
+
+
+def test_the_737_republishes_the_jsbsim_state_its_panel_reads():
+    """The 737-300 panel reads /fdm/jsbsim/*, which --fdm=null leaves empty."""
+    props = CockpitSync(_b737_fdm(), "737").properties()
+    assert props["/fdm/jsbsim/fcs/flap-pos-norm"] == pytest.approx(0.25)
+    assert props["/fdm/jsbsim/inertia/weight-lbs"] == pytest.approx(83000.0)
+    assert props["/fdm/jsbsim/velocities/vg-fps"] == pytest.approx(780.0)
+
+
+def test_a_republished_property_the_model_does_not_have_is_skipped():
+    """Models vary; a missing property must not take the whole cockpit down."""
+    fdm = _b737_fdm()
+    del fdm._values["velocities/vg-fps"]
+    props = CockpitSync(fdm, "737").properties()
+    assert "/fdm/jsbsim/velocities/vg-fps" not in props
+    assert props["/fdm/jsbsim/fcs/flap-pos-norm"] == pytest.approx(0.25)
+
+
+def test_c172p_republishes_nothing_because_its_panel_asks_for_nothing():
+    props = CockpitSync(_fdm(), "c172p").properties()
+    assert not [p for p in props if p.startswith("/fdm/jsbsim/")]
+
+
+def test_the_737_stabilizer_moves_with_pitch_trim():
+    """Nose-up trim is negative in JSBSim and more units on a 737's trim wheel."""
+    nose_up = CockpitSync(_b737_fdm(**{"fcs/pitch-trim-cmd-norm": -0.5}), "737").properties()
+    nose_down = CockpitSync(_b737_fdm(**{"fcs/pitch-trim-cmd-norm": 0.5}), "737").properties()
+    assert nose_up["/fdm/jsbsim/fcs/stabilizer-pos-unit"] > nose_down["/fdm/jsbsim/fcs/stabilizer-pos-unit"]
+    assert 0.0 <= nose_down["/fdm/jsbsim/fcs/stabilizer-pos-unit"] <= 17.0
+    assert 0.0 <= nose_up["/fdm/jsbsim/fcs/stabilizer-pos-unit"] <= 17.0
+
+
+def test_the_737_trim_wheel_and_its_target_agree():
+    """The panel animates the wheel from one and the indicator from the other."""
+    props = CockpitSync(_b737_fdm(), "737").properties()
+    assert props["/fdm/jsbsim/fcs/stabilizer/stab-target"] == pytest.approx(
+        props["/fdm/jsbsim/fcs/stabilizer-pos-unit"]
+    )
+
+
+def test_the_737_spoiler_lever_follows_the_speedbrake_command():
+    """The only /controls/ path the 737-300 model animates from."""
+    props = CockpitSync(_b737_fdm(), "737").properties()
+    assert props["/controls/flight/spoilers-lever-pos"] == pytest.approx(0.4)
+
+
+def test_the_737_gets_the_generic_cockpit_properties_too():
+    props = CockpitSync(_b737_fdm(), "737").properties()
+    assert props["/controls/flight/elevator"] == pytest.approx(-0.1)
+    assert props["/controls/engines/engine[1]/throttle"] == pytest.approx(0.85)
+
+
+def test_the_cockpit_is_keyed_on_the_jsbsim_model_not_flightgears_name():
+    """FlightGear calls it 737-300; the profile registry calls it 737."""
+    sync = CockpitSync(_b737_fdm(), "737", flightgear_aircraft="737-300")
+    props = sync.properties()
+    assert props["/fdm/jsbsim/fcs/flap-pos-norm"] == pytest.approx(0.25)
+    assert "/fdm/jsbsim/fcs/stabilizer-pos-unit" in props
+
+
+def test_a_cockpit_flightgear_did_not_load_falls_back_to_the_generic_one():
+    """Writing 737 panel properties into a Cessna's cockpit means nothing."""
+    with pytest.warns(UserWarning, match="c172p"):
+        sync = CockpitSync(_b737_fdm(), "737", flightgear_aircraft="c172p")
+    props = sync.properties()
+    assert not [p for p in props if p.startswith("/fdm/jsbsim/")]
+    assert sync.mirrors == ()
+    assert props["/controls/flight/elevator"] == pytest.approx(-0.1)
+
+
+def test_the_cockpit_is_built_when_flightgear_does_not_say_what_it_loaded():
+    sync = CockpitSync(_b737_fdm(), "737", flightgear_aircraft=None)
+    assert "/fdm/jsbsim/fcs/flap-pos-norm" in sync.properties()

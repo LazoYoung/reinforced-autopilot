@@ -8,7 +8,8 @@ with optional live [FlightGear](https://www.flightgear.org/) visualization.
 
 - **Scenario customization**: each `Scenario` selects which control axes and observations the agent sees, defines the reward function, the initial flight condition, and the aircraft model.
 - **Simulator-agnostic core**: the Gymnasium env talks to `Simulator` interface which abstracts the backend simulator instance.
-- **FlightGear visualization**: JSBSim simulation frames are streamed to FlightGear over UDP, so you can watch the agent fly in real time.
+- **Aircraft profiles**: everything aerogym needs to know about an aircraft is keyed on its JSBSim model name in one registry, so naming an aircraft is enough to get a flyable task.
+- **FlightGear visualization**: JSBSim simulation frames are streamed to FlightGear over UDP, so you can watch the agent fly in real time — with a cockpit that tracks the simulation rather than contradicting it.
 
 ## Installation
 
@@ -18,7 +19,7 @@ with optional live [FlightGear](https://www.flightgear.org/) visualization.
 uv sync
 ```
 
-The python wheel includes the JBSim simulator backend.
+The python wheel includes the JSBSim simulator backend.
 
 ## Quick start
 
@@ -40,7 +41,9 @@ env.close()
 Or run the bundled example script:
 
 ```sh
-uv run examples/run_random_agent.py --flightgear
+uv run examples/run_random_agent.py                  # headless Cessna 172
+uv run examples/run_random_agent.py --flightgear     # with visualization
+uv run examples/run_random_agent.py --aircraft 737   # fly a different type
 ```
 
 To use `--flightgear` to visualize the agent, install [FlightGear](https://www.flightgear.org/download/).
@@ -82,6 +85,24 @@ Units are canonical across all simulator backends.
 | Aileron | + for Roll Right |
 | Rudder | + for Yaw Right |
 | Throttle | [0, 1] |
+
+## Aircraft
+
+`Scenario.aircraft` is a JSBSim model name. Everything else aerogym needs to know about an
+aircraft — what FlightGear calls it, a cruise it can hold, how its engines and controls start,
+what its cockpit reads — hangs off that name in a single profile registry
+(`src/aerogym/simulators/jsbsim/aircraft.py`). Profiles ship for `c172p` and `737`.
+
+Naming an aircraft is therefore enough to get a flyable task: the scenario takes its initial
+altitude and airspeed from the profile when you don't specify them.
+
+```python
+make_steady_flight_scenario(aircraft="c172p")  # 5000 ft at 95 kts
+make_steady_flight_scenario(aircraft="737")    # 30000 ft at 280 kts
+```
+
+An aircraft with no profile still flies and still renders — JSBSim and FlightGear agree on most
+model names, so the name itself is the fallback. Adding a profile is one entry in that one file.
 
 ## Testing
 

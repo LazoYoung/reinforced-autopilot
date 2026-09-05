@@ -464,3 +464,49 @@ def test_get_returns_none_when_the_connection_drops():
     client = flightgear._PropertyClient(port)
     assert client.get("/sim/aircraft") is None
     client.close()
+
+
+def _make_addon_catalog(root, catalog: str, aircraft: str) -> str:
+    """Create the layout FlightGear's launcher installs add-on aircraft into."""
+    path = os.path.join(str(root), "Aircraft", catalog, "Aircraft", aircraft)
+    os.makedirs(path)
+    open(os.path.join(path, f"{aircraft}-set.xml"), "w").close()
+    return os.path.dirname(path)
+
+
+def test_addon_aircraft_catalogs_under_fg_home_are_found(tmp_path, monkeypatch):
+    """fgfs only searches its own data dir; the launcher's add-ons live elsewhere."""
+    expected = _make_addon_catalog(tmp_path, "org.flightgear.fgaddon.stable_2024", "737-300")
+    monkeypatch.setattr(flightgear, "_fg_home", lambda: str(tmp_path))
+    assert flightgear.find_aircraft_paths() == [expected]
+
+
+def test_several_catalogs_are_all_found(tmp_path, monkeypatch):
+    a = _make_addon_catalog(tmp_path, "org.flightgear.fgaddon.stable_2024", "737-300")
+    b = _make_addon_catalog(tmp_path, "org.example.catalog", "a320")
+    monkeypatch.setattr(flightgear, "_fg_home", lambda: str(tmp_path))
+    assert sorted(flightgear.find_aircraft_paths()) == sorted([a, b])
+
+
+def test_no_fg_home_means_no_aircraft_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(flightgear, "_fg_home", lambda: str(tmp_path / "nothing-here"))
+    assert flightgear.find_aircraft_paths() == []
+
+
+def test_launch_points_flightgear_at_every_addon_catalog(monkeypatch):
+    """Without this, --aircraft=737-300 finds nothing: fgfs cannot see add-ons."""
+    monkeypatch.setattr(flightgear, "find_aircraft_paths", lambda: ["/catalog/Aircraft"])
+    calls = _captured_launch(monkeypatch, "/usr/bin/fgfs")
+    assert "--fg-aircraft=/catalog/Aircraft" in calls["args"]
+
+
+def test_launch_asks_for_the_aircraft_the_viewer_was_given(monkeypatch):
+    calls = {}
+
+    def fake_popen(args, **kwargs):
+        calls["args"] = args
+        return _FakeProcess()
+
+    monkeypatch.setattr(flightgear.subprocess, "Popen", fake_popen)
+    assert FlightGearViewer(executable="/usr/bin/fgfs", aircraft="737-300").launch()
+    assert "--aircraft=737-300" in calls["args"]

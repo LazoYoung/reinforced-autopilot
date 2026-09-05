@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Callable
+import warnings
+
+from .aircraft import profile_for
 
 _MAX_TANKS = 32
 _TINY = 1e-9
@@ -8,26 +10,6 @@ _TINY = 1e-9
 # FlightGear reads the packet's fuel quantity, which JSBSim fills in pounds, as
 # US gallons; 1 lb/gal keeps every unit it derives from that self-consistent.
 _FUEL_DENSITY_PPG = 1.0
-
-
-def _c172p_cockpit(controls: dict[str, float]) -> dict[str, float]:
-    """c172p animates its yoke and pedals from JSBSim FCS outputs."""
-    return {
-        "/sim/model/c172p/cockpit/yoke-elevator": controls["/controls/flight/elevator"],
-        "/sim/model/c172p/cockpit/yoke-aileron": controls["/controls/flight/aileron"],
-        "/sim/model/c172p/cockpit/pedals-rudder": controls["/controls/flight/rudder"],
-    }
-
-
-# Keyed by the aircraft FlightGear has loaded, not the one JSBSim is flying.
-COCKPIT_MODELS: dict[str, Callable[[dict[str, float]], dict[str, float]]] = {
-    "c172p": _c172p_cockpit,
-}
-
-# (destination, source) pairs to copy within FlightGear's own tree
-COCKPIT_MIRRORS: dict[str, tuple[tuple[str, str], ...]] = {
-    "c172p": (("/systems/static-pressure-inhg-selected", "/environment/pressure-inhg"),),
-}
 
 
 def _tank_capacities_lbs(fdm) -> list[float]:
@@ -48,12 +30,28 @@ def _tank_capacities_lbs(fdm) -> list[float]:
 class CockpitSync:
     """Builds the property writes that keep a FlightGear cockpit in step."""
 
-    def __init__(self, fdm, aircraft: str) -> None:
+    def __init__(self, fdm, aircraft: str, flightgear_aircraft: str | None = None) -> None:
+        """``aircraft`` is the JSBSim model, which is what profiles are keyed on.
+
+        ``flightgear_aircraft`` is what FlightGear reports it actually loaded.
+        When that is not the aircraft the profile describes, only the generic
+        properties are published: a 737's panel properties mean nothing in a
+        Cessna's cockpit.
+        """
         self._fdm = fdm
         self._engines = range(fdm.get_propulsion().get_num_engines())
         self._capacities_lbs = _tank_capacities_lbs(fdm)
-        self._cockpit = COCKPIT_MODELS.get(aircraft)
-        self.mirrors = COCKPIT_MIRRORS.get(aircraft, ())
+        profile = profile_for(aircraft)
+        if flightgear_aircraft is not None and flightgear_aircraft != profile.flightgear:
+            warnings.warn(
+                f"FlightGear loaded {flightgear_aircraft!r} but the simulation is "
+                f"flying {aircraft!r}; its cockpit will show only generic state.",
+                stacklevel=2,
+            )
+            profile = profile_for("")
+        self._cockpit = profile.cockpit
+        self._republish = profile.republish
+        self.mirrors = profile.mirrors
 
     def initial_properties(self) -> dict[str, object]:
         """Power up the panel, which FlightGear otherwise boots cold and dark.
@@ -85,6 +83,11 @@ class CockpitSync:
             props[f"{tank}/density-ppg"] = _FUEL_DENSITY_PPG
             props[f"{tank}/capacity-gal_us"] = capacity_lbs
             props[f"{tank}/selected"] = "true"
+        for prop in self._republish:
+            try:
+                props[f"/fdm/jsbsim/{prop}"] = fdm[prop]
+            except KeyError:
+                pass  # models vary; a missing one must not stop the rest
         if self._cockpit is not None:
-            props.update(self._cockpit(controls))
+            props.update(self._cockpit(fdm, controls))
         return props

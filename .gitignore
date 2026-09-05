@@ -11,3 +11,9 @@ wheels/
 
 # Tooling caches
 .pytest_cache/
+
+# Claude
+.claude/
+docs/superpowers/
+docs/adr/
+CLAUDE.md

@@ -5,6 +5,7 @@ import os
 import plistlib
 import socket
 import threading
+import time
 import types
 
 import pytest
@@ -263,3 +264,203 @@ def test_lsappinfo_name_parsing(monkeypatch, output, expected):
         lambda cmd, **kw: types.SimpleNamespace(stdout=output),
     )
     assert flightgear._lsappinfo_name("4321") == expected
+
+
+class _FakePropertyServer:
+    """Stands in for FlightGear's telnet property server in ``data`` mode."""
+
+    def __init__(self, values: dict[str, str] | None = None) -> None:
+        self.values = dict(values or {})
+        self.sets: list[tuple[str, str]] = []
+        self._lock = threading.Lock()
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.bind(("127.0.0.1", 0))
+        self._sock.listen(5)
+        self.port = self._sock.getsockname()[1]
+        self._stop = threading.Event()
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn):
+        buf = b""
+        with conn:
+            while not self._stop.is_set():
+                try:
+                    chunk = conn.recv(4096)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                buf += chunk
+                while b"\n" in buf:
+                    line, _, buf = buf.partition(b"\n")
+                    self._handle(conn, line.decode().strip())
+
+    def _handle(self, conn, line: str):
+        verb, _, rest = line.partition(" ")
+        if verb == "get":
+            with self._lock:
+                value = self.values.get(rest.strip(), "")
+            conn.sendall(f"{value}\n".encode())
+        elif verb == "set":
+            prop, _, value = rest.partition(" ")
+            with self._lock:
+                self.values[prop] = value
+                self.sets.append((prop, value))
+
+    def recorded(self) -> dict[str, str]:
+        with self._lock:
+            return dict(self.sets)
+
+    def close(self):
+        self._stop.set()
+        self._sock.close()
+
+
+@pytest.fixture
+def property_server():
+    server = _FakePropertyServer()
+    yield server
+    server.close()
+
+
+def _wait_for(predicate, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_get_property_reads_a_value(property_server):
+    property_server.values["/sim/aircraft"] = "c172p"
+    viewer = FlightGearViewer(telnet_port=property_server.port)
+    assert viewer.get_property("/sim/aircraft") == "c172p"
+
+
+def test_get_property_returns_none_when_nothing_is_listening():
+    assert FlightGearViewer(telnet_port=1).get_property("/sim/aircraft") is None
+
+
+def test_property_sync_writes_what_the_source_returns(property_server):
+    viewer = FlightGearViewer(telnet_port=property_server.port)
+    viewer._process = _FakeProcess()
+    viewer.start_property_sync(lambda: {"/controls/flight/aileron": 0.25}, rate_hz=50.0)
+    try:
+        assert _wait_for(lambda: "/controls/flight/aileron" in property_server.recorded())
+        assert property_server.recorded()["/controls/flight/aileron"] == "0.25"
+    finally:
+        viewer.stop_property_sync()
+
+
+def test_property_sync_copies_mirrored_values(property_server):
+    property_server.values["/environment/pressure-inhg"] = "29.42"
+    viewer = FlightGearViewer(telnet_port=property_server.port)
+    viewer._process = _FakeProcess()
+    viewer.start_property_sync(
+        dict,
+        mirrors=(("/systems/static-pressure-inhg-selected", "/environment/pressure-inhg"),),
+        rate_hz=50.0,
+    )
+    try:
+        assert _wait_for(
+            lambda: property_server.recorded().get("/systems/static-pressure-inhg-selected")
+            == "29.42"
+        )
+    finally:
+        viewer.stop_property_sync()
+
+
+def test_property_sync_does_not_start_without_a_running_flightgear(property_server):
+    viewer = FlightGearViewer(telnet_port=property_server.port)
+    viewer.start_property_sync(lambda: {"/controls/flight/aileron": 1.0})
+    assert viewer._sync_thread is None
+
+
+def test_property_sync_warns_when_flightgear_cannot_be_reached():
+    viewer = FlightGearViewer(telnet_port=1)
+    viewer._process = _FakeProcess()
+    with pytest.warns(UserWarning, match="property server"):
+        viewer._sync_properties(dict, (), rate_hz=50.0, initial={})
+
+
+def test_property_sync_writes_the_initial_state_once(property_server):
+    viewer = FlightGearViewer(telnet_port=property_server.port)
+    viewer._process = _FakeProcess()
+    viewer.start_property_sync(
+        dict, rate_hz=50.0, initial={"/controls/switches/master-bat": "true"}
+    )
+    try:
+        assert _wait_for(
+            lambda: property_server.recorded().get("/controls/switches/master-bat") == "true"
+        )
+        time.sleep(0.2)
+        written = [p for p, _ in property_server.sets if p.endswith("master-bat")]
+        assert len(written) == 1
+    finally:
+        viewer.stop_property_sync()
+
+
+def test_stop_property_sync_is_idempotent(property_server):
+    viewer = FlightGearViewer(telnet_port=property_server.port)
+    viewer._process = _FakeProcess()
+    viewer.start_property_sync(dict, rate_hz=50.0)
+    viewer.stop_property_sync()
+    viewer.stop_property_sync()
+    assert viewer._sync_thread is None
+
+
+def test_launch_asks_for_a_property_server_fast_enough_to_drive_a_cockpit(monkeypatch):
+    """--telnet=<port> would run it at 5 Hz, far too slow to animate controls."""
+    calls = _captured_launch(monkeypatch, "/usr/bin/fgfs")
+    assert "--props=socket,bi,60,localhost,5401,tcp" in calls["args"]
+    assert not [arg for arg in calls["args"] if arg.startswith("--telnet")]
+
+
+def test_get_reads_one_value_per_reply_when_flightgear_batches_them():
+    """A single recv can carry several replies; each get must take just one."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+
+    def serve():
+        conn, _ = server.accept()
+        with conn:
+            conn.recv(1024)  # the "data" handshake
+            time.sleep(0.05)
+            conn.recv(1024)  # both gets, pipelined by the client
+            conn.sendall(b"25.4\n25.9\n")
+        server.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    client = flightgear._PropertyClient(port)
+    assert client.get("/a") == "25.4"
+    assert client.get("/b") == "25.9"
+    client.close()
+
+
+def test_get_returns_none_when_the_connection_drops():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+
+    def serve():
+        conn, _ = server.accept()
+        conn.recv(1024)
+        conn.close()
+        server.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    client = flightgear._PropertyClient(port)
+    assert client.get("/sim/aircraft") is None
+    client.close()

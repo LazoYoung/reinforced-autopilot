@@ -1,10 +1,3 @@
-"""Launch FlightGear as an external-FDM viewer for a running simulation.
-
-FlightGear is started with its own flight dynamics disabled (``--fdm=null``)
-and listens for native-FDM UDP packets that JSBSim pushes, so it acts purely
-as a visualizer that tracks the simulated aircraft.
-"""
-
 from __future__ import annotations
 
 import glob
@@ -17,21 +10,21 @@ import sys
 import threading
 import time
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 _WINDOWS_GLOBS = (
     r"C:\Program Files\FlightGear*\bin\fgfs.exe",
     r"C:\Program Files (x86)\FlightGear*\bin\fgfs.exe",
 )
 
-# macOS ships FlightGear as an application bundle, which is never on PATH.
 _MACOS_APP_GLOBS = (
     "/Applications/FlightGear*.app",
     "~/Applications/FlightGear*.app",
 )
-# Release bundles name the binary after the app ("FlightGear"); source builds
-# and older bundles keep the traditional "fgfs".
+
 _BUNDLE_EXECUTABLE_NAMES = ("fgfs", "FlightGear")
+
+_PROPERTY_SERVER_HZ = 60
 
 
 def _bundle_info(path: str) -> dict:
@@ -44,11 +37,7 @@ def _bundle_info(path: str) -> dict:
 
 
 def _bundle_executable(path: str) -> str | None:
-    """Map a macOS ``.app`` bundle to the FlightGear binary inside it.
-
-    Prefers the name the bundle declares for itself, since neither hard-coded
-    name has held across releases.
-    """
+    """Map a macOS ``.app`` bundle to the FlightGear binary inside it."""
     declared = _bundle_info(path).get("CFBundleExecutable")
     names = ([declared] if declared else []) + list(_BUNDLE_EXECUTABLE_NAMES)
     for name in names:
@@ -137,6 +126,60 @@ def find_fgfs() -> str | None:
     return None
 
 
+class _PropertyClient:
+    """A connection to FlightGear's property server, in ``data`` mode: replies
+    are bare values rather than the interactive prompt's decorated output."""
+
+    def __init__(self, port: int, timeout: float = 5.0) -> None:
+        self._timeout = timeout
+        self._buffer = b""
+        self._sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+        self._send("data")
+        self._drain()
+
+    def _send(self, command: str) -> None:
+        self._sock.sendall(command.encode() + b"\r\n")
+
+    def _drain(self) -> None:
+        """Discard queued output, so it can't be read as the next reply."""
+        self._sock.setblocking(False)
+        try:
+            while self._sock.recv(4096):
+                pass
+        except OSError:
+            pass
+        self._sock.settimeout(self._timeout)
+
+    def set(self, prop: str, value: object) -> None:
+        self._send(f"set {prop} {value}")
+
+    def get(self, prop: str, timeout: float = 1.0) -> str | None:
+        """The property's value, or None if FlightGear didn't answer in time.
+
+        FlightGear batches replies, so take one line and keep the remainder.
+        """
+        self._send(f"get {prop}")
+        self._sock.settimeout(timeout)
+        while b"\n" not in self._buffer:
+            try:
+                chunk = self._sock.recv(4096)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                # Drop a partial line rather than answer a later request with it.
+                self._buffer = b""
+                return None
+            self._buffer += chunk
+        line, _, self._buffer = self._buffer.partition(b"\n")
+        return line.decode(errors="replace").strip() or None
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+
 class FlightGearViewer:
     """A FlightGear subprocess configured as a native-FDM listener."""
 
@@ -158,6 +201,8 @@ class FlightGearViewer:
         self.telnet_port = telnet_port
         self.ready_timeout = ready_timeout
         self._process: subprocess.Popen | None = None
+        self._sync_thread: threading.Thread | None = None
+        self._sync_stop = threading.Event()
 
     def launch(
         self,
@@ -165,20 +210,13 @@ class FlightGearViewer:
         lon_deg: float | None = None,
         heading_deg: float | None = None,
     ) -> bool:
-        """Start FlightGear; returns False (with a warning) if not found.
-
-        Passing the scenario's initial position lets FlightGear load the right
-        scenery immediately instead of booting at its default airport.
-        """
+        """Start FlightGear; returns False (with a warning) if not found."""
         if self._process is not None and self._process.poll() is None:
             return True
         exe = self.executable or find_fgfs()
         if exe is None:
             warnings.warn(
-                "FlightGear executable not found; running without visualization. "
-                "Install FlightGear and/or set the AEROGYM_FGFS environment "
-                "variable to the full path of fgfs(.exe), or of FlightGear.app "
-                "on macOS.",
+                "FlightGear not found! Running in headless mode.",
                 stacklevel=2,
             )
             return False
@@ -186,7 +224,7 @@ class FlightGearViewer:
             exe,
             "--fdm=null",
             f"--native-fdm=socket,in,{self.rate_hz},,{self.port},udp",
-            f"--telnet={self.telnet_port}",
+            f"--props=socket,bi,{_PROPERTY_SERVER_HZ},localhost,{self.telnet_port},tcp",
             "--disable-ai-traffic",
             "--timeofday=noon",
         ]
@@ -230,7 +268,7 @@ class FlightGearViewer:
             if self._process.poll() is not None:
                 warnings.warn(
                     f"FlightGear exited during startup (code {self._process.returncode}); "
-                    "continuing without visualization.",
+                    "Running in headless mode.",
                     stacklevel=2,
                 )
                 return False
@@ -250,7 +288,82 @@ class FlightGearViewer:
         )
         return False
 
+    def get_property(self, name: str) -> str | None:
+        """Read one property from the running FlightGear, or None if it can't."""
+        try:
+            client = _PropertyClient(self.telnet_port)
+        except OSError:
+            return None
+        try:
+            return client.get(name)
+        finally:
+            client.close()
+
+    def start_property_sync(
+        self,
+        source: Callable[[], dict[str, object]],
+        mirrors: Sequence[tuple[str, str]] = (),
+        rate_hz: float = 20.0,
+        initial: dict[str, object] | None = None,
+    ) -> None:
+        """Keep feeding FlightGear the state its own flight model would supply.
+
+        ``initial`` is written once on connecting, for state the user should stay
+        free to change afterwards; ``source`` is called each tick; ``mirrors``
+        names ``(destination, origin)`` pairs to copy within FlightGear's own
+        tree. Runs on a private thread, so the simulation never blocks.
+        """
+        if self._process is None or self._sync_thread is not None:
+            return
+        self._sync_stop.clear()
+        self._sync_thread = threading.Thread(
+            target=self._sync_properties,
+            args=(source, tuple(mirrors), rate_hz, initial or {}),
+            daemon=True,
+        )
+        self._sync_thread.start()
+
+    def stop_property_sync(self) -> None:
+        if self._sync_thread is None:
+            return
+        self._sync_stop.set()
+        self._sync_thread.join(timeout=5.0)
+        self._sync_thread = None
+
+    def _sync_properties(
+        self,
+        source: Callable[[], dict[str, object]],
+        mirrors: tuple[tuple[str, str], ...],
+        rate_hz: float,
+        initial: dict[str, object],
+    ) -> None:
+        try:
+            client = _PropertyClient(self.telnet_port)
+        except OSError:
+            warnings.warn(
+                "Could not reach FlightGear's property server; its cockpit "
+                "controls and instruments will not track the simulation.",
+                stacklevel=2,
+            )
+            return
+        interval = 1.0 / rate_hz
+        try:
+            for prop, value in initial.items():
+                client.set(prop, value)
+            while not self._sync_stop.wait(interval):
+                for prop, value in source().items():
+                    client.set(prop, value)
+                for destination, origin in mirrors:
+                    value = client.get(origin)
+                    if value is not None:
+                        client.set(destination, value)
+        except OSError:
+            pass  # FlightGear went away; the viewer is optional either way
+        finally:
+            client.close()
+
     def close(self) -> None:
+        self.stop_property_sync()
         if self._process is None:
             return
         if self._process.poll() is None:

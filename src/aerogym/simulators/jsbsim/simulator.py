@@ -9,6 +9,7 @@ from pathlib import Path
 from aerogym.scenario import Scenario
 from aerogym.simulator import Simulator, SimulatorError
 from aerogym.variables import FlightVariable
+from .cockpit import CockpitSync
 from .flightgear import FlightGearViewer
 from .properties import CONTROL_MAP, OBSERVATION_MAP
 
@@ -71,8 +72,22 @@ class JSBSimSimulator(Simulator):
             # Don't start the episode while FlightGear is still on its splash
             # screen — nothing would be visualized. Warns and proceeds headless
             # if FlightGear never becomes ready.
-            self._viewer.wait_until_ready()
+            if self._viewer.wait_until_ready():
+                self._start_cockpit_sync(fdm)
             self._viewer_synced = True
+
+    def _start_cockpit_sync(self, fdm) -> None:
+        """Supply the cockpit state FlightGear's disabled flight model can't.
+
+        Keyed on the aircraft FlightGear actually loaded, which the caller may
+        have overridden.
+        """
+        assert self._viewer is not None
+        aircraft = self._viewer.get_property("/sim/aircraft") or self._aircraft
+        sync = CockpitSync(fdm, aircraft)
+        self._viewer.start_property_sync(
+            sync.properties, sync.mirrors, initial=sync.initial_properties()
+        )
 
     def set_control(self, var: FlightVariable, value: float) -> None:
         mapping = CONTROL_MAP[var]

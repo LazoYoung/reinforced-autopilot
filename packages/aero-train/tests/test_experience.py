@@ -51,11 +51,53 @@ def test_obs_are_the_counting_env_step_indices():
     src.close()
 
 
+class VaryingActionAgent(Agent):
+    """Action = obs value mod 2, so the recorded actions vary over time.
+
+    A stub that hardcodes a constant action, or one that feeds the agent the
+    wrong observation, produces a different sequence than the one asserted
+    below -- unlike a constant agent, whose output can't distinguish either
+    bug from a correct implementation.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, obs, agent_state=None):
+        self.calls += 1
+        actions = np.asarray(obs)[:, 0].astype(np.int64) % 2
+        return actions, agent_state
+
+    def sync_weights(self, actor_state_dict):
+        pass
+
+
+class VaryingRewardEnv(CountingEnv):
+    """Reward equals the post-step counter, not CountingEnv's constant 1.0.
+
+    CountingEnv's own reward is deliberately constant -- Tasks 9, 10, 15 and
+    17 rely on it for hand-computable n-step sums -- so the variation needed
+    to make a reward-recording test discriminating lives here instead of in
+    conftest.py.
+    """
+
+    def step(self, action):
+        obs, _, term, trunc, info = super().step(action)
+        return obs, float(self.t), term, trunc, info
+
+
+def varying_reward_env_fn(episode_len: int = 100):
+    return lambda: VaryingRewardEnv(episode_len=episode_len)
+
+
 def test_rewards_and_actions_are_recorded():
-    src = make_source(n_envs=2, agent=ConstantAgent(action=1))
+    env = gym.vector.SyncVectorEnv([varying_reward_env_fn()] * 2)
+    src = ExperienceSource(env, VaryingActionAgent(), seed=0)
     seg, _ = src.collect(3)
-    assert seg.rewards.tolist() == [[1.0, 1.0]] * 3
-    assert seg.actions.tolist() == [[1, 1]] * 3
+    # obs before each step is 0, 1, 2 -> action = obs % 2 -> 0, 1, 0
+    assert seg.actions.tolist() == [[0, 0], [1, 1], [0, 0]]
+    # reward is the post-step counter -> 1, 2, 3
+    assert seg.rewards.tolist() == [[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]
     src.close()
 
 

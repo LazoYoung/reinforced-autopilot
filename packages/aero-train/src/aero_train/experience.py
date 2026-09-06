@@ -28,9 +28,9 @@ class ExperienceSource:
         self.agent = agent
         self.num_envs = int(env.num_envs)
         self._obs_shape = env.single_observation_space.shape
-        self._act_space = env.single_action_space
-        self._act_dtype = np.int64 if isinstance(self._act_space, gym.spaces.Discrete) else np.float32
-        self._act_shape = () if isinstance(self._act_space, gym.spaces.Discrete) else self._act_space.shape
+        act_space = env.single_action_space
+        self._act_dtype = np.int64 if isinstance(act_space, gym.spaces.Discrete) else np.float32
+        self._act_shape = () if isinstance(act_space, gym.spaces.Discrete) else act_space.shape
         # SeedSequence rather than seed + index: independent streams from one root
         seeds = [int(s.generate_state(1)[0]) for s in np.random.SeedSequence(seed).spawn(self.num_envs)]
         obs, _ = env.reset(seed=seeds)

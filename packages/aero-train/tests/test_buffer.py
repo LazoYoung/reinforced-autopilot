@@ -126,6 +126,11 @@ def test_state_dict_round_trip_preserves_ring_wrap_position():
     # sample() never reads it. A buffer restored mid-ring must resume
     # overwriting from the same slot as the live one, not restart at index 0
     # -- otherwise the next add corrupts a different, still-valid transition.
+    #
+    # This also only means anything if the two buffers are independent after
+    # the round trip -- see test_state_dict_round_trip_does_not_alias, which
+    # checks that directly. If state_dict()/load_state_dict() shared storage,
+    # this assertion would pass vacuously: "restored" would just be "buf".
     buf = ReplayBuffer(5, (1,))
     buf.add(transitions([1.0, 2.0, 3.0]))  # pos=3: not 0, not a capacity boundary
     restored = ReplayBuffer(5, (1,))
@@ -136,3 +141,24 @@ def test_state_dict_round_trip_preserves_ring_wrap_position():
 
     assert restored.state_dict()["pos"] == buf.state_dict()["pos"]
     assert np.array_equal(restored.state_dict()["obs"], buf.state_dict()["obs"])
+
+
+def test_state_dict_round_trip_does_not_alias():
+    # state_dict() must hand back a frozen snapshot, and load_state_dict()
+    # must not retain references into the dict it was given -- otherwise a
+    # buffer and its checkpoint (or two buffers restored from the same
+    # checkpoint) share storage, and add() on one silently corrupts the
+    # other. Checked in both directions: mutating the live buffer after
+    # taking a snapshot, and mutating a buffer restored from that snapshot.
+    buf = ReplayBuffer(5, (1,))
+    buf.add(transitions([1.0, 2.0, 3.0]))
+
+    sd = buf.state_dict()
+    buf.add(transitions([99.0]))  # mutate the source after snapshotting
+    assert 99.0 not in sd["obs"][:, 0]
+
+    restored = ReplayBuffer(5, (1,))
+    restored.load_state_dict(sd)
+    restored.add(transitions([77.0]))  # mutate the restored copy
+    assert 77.0 not in sd["obs"][:, 0]
+    assert 77.0 not in buf.state_dict()["obs"][:, 0]

@@ -86,24 +86,31 @@ class ReplayBuffer:
         )
 
     def state_dict(self) -> dict[str, Any]:
+        # Copy every array out: the caller may go on to add() to this buffer,
+        # or to another buffer restored from this same dict, and neither of
+        # those should be able to mutate what's meant to be a frozen snapshot.
         return {
-            "obs": self._obs,
-            "next_obs": self._next_obs,
-            "actions": self._actions,
-            "returns": self._returns,
-            "terminated": self._terminated,
-            "steps": self._steps,
+            "obs": self._obs.copy(),
+            "next_obs": self._next_obs.copy(),
+            "actions": self._actions.copy(),
+            "returns": self._returns.copy(),
+            "terminated": self._terminated.copy(),
+            "steps": self._steps.copy(),
             "pos": self._pos,
             "size": self._size,
         }
 
     def load_state_dict(self, sd: dict[str, Any]) -> None:
-        self._obs = np.asarray(sd["obs"])
-        self._next_obs = np.asarray(sd["next_obs"])
-        self._actions = np.asarray(sd["actions"])
-        self._returns = np.asarray(sd["returns"])
-        self._terminated = np.asarray(sd["terminated"])
-        self._steps = np.asarray(sd["steps"])
+        # np.asarray is a no-op (returns the same object) when the input is
+        # already an ndarray, so this must copy explicitly -- otherwise this
+        # buffer and the dict's source end up sharing storage, and add() on
+        # either one silently corrupts the other.
+        self._obs = np.array(sd["obs"], copy=True)
+        self._next_obs = np.array(sd["next_obs"], copy=True)
+        self._actions = np.array(sd["actions"], copy=True)
+        self._returns = np.array(sd["returns"], copy=True)
+        self._terminated = np.array(sd["terminated"], copy=True)
+        self._steps = np.array(sd["steps"], copy=True)
         self._pos = int(sd["pos"])
         self._size = int(sd["size"])
         self.capacity = len(self._obs)

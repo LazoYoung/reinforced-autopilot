@@ -1,0 +1,156 @@
+"""The training loop: everything cross-cutting and algorithm-independent.
+
+Broadcast weights, collect, observe, update, log, checkpoint, evaluate. Written
+once. It learns nothing algorithm-specific because Algorithm.update() hands back
+a metrics dict that goes straight to the tracker.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Callable
+
+import gymnasium as gym
+import numpy as np
+import torch
+
+from .algo.base import Algorithm
+from .checkpoint import CheckpointManager
+from .config import TrainConfig
+from .primitives import SELECTOR_PREFIX, EpisodeResult
+from .rollout import RolloutEngine
+from .tracking import Tracker
+
+
+def evaluate_policy(
+    algo: Algorithm,
+    env_fn: Callable[[], gym.Env],
+    episodes: int,
+    seed: int = 0,
+) -> float:
+    """Mean return over `episodes` greedy episodes in a single environment.
+
+    Greediness is requested through the same actor_state_dict convention the
+    workers use -- exploration parameters under the `selector.` prefix -- rather
+    than by reaching into the agent, so it keeps working as algorithms are added.
+    """
+    agent = algo.make_agent()
+    agent.sync_weights(
+        {**algo.actor_state_dict(), SELECTOR_PREFIX + "epsilon": np.asarray(0.0, np.float32)}
+    )
+    env = env_fn()
+    returns: list[float] = []
+    try:
+        for i in range(episodes):
+            obs, _ = env.reset(seed=seed + i)
+            total, done = 0.0, False
+            while not done:
+                actions, _ = agent(np.asarray(obs, np.float32)[None, ...])
+                obs, reward, terminated, truncated, _ = env.step(actions[0].item())
+                total += float(reward)
+                done = bool(terminated or truncated)
+            returns.append(total)
+    finally:
+        env.close()
+    return float(np.mean(returns))
+
+
+class Trainer:
+    def __init__(
+        self,
+        cfg: TrainConfig,
+        algo: Algorithm,
+        engine: RolloutEngine,
+        tracker: Tracker,
+        checkpoints: CheckpointManager,
+        eval_env_fn: Callable[[], gym.Env] | None = None,
+    ) -> None:
+        self.cfg = cfg
+        self.algo = algo
+        self.engine = engine
+        self.tracker = tracker
+        self.checkpoints = checkpoints
+        self.eval_env_fn = eval_env_fn
+        self.frames = 0
+        self.iteration = 0
+
+    def run(self) -> None:
+        self.tracker.log_params(self.cfg)
+        try:
+            while self.frames < self.cfg.total_steps:
+                metrics = self._iterate()
+                self.tracker.log_metrics(metrics, step=self.algo.global_step)
+                self._maybe_checkpoint()
+        finally:
+            self.engine.close()
+            self.tracker.close()
+
+    def _iterate(self) -> dict[str, float]:
+        started = time.perf_counter()
+        # ray.put-style single broadcast happens inside the engine; at ~20 KB it
+        # costs microseconds, which is what makes exactly-on-policy affordable
+        self.engine.sync_weights(self.algo.actor_state_dict())
+        segment, episodes = self.engine.collect(self.cfg.rollout.frames_per_iter)
+        collected = time.perf_counter()
+
+        self.algo.observe(segment)
+        algo_metrics = self.algo.update() or {}
+        updated = time.perf_counter()
+
+        self.frames += int(segment.valid.sum())
+        self.iteration += 1
+        rollout_s = collected - started
+        update_s = updated - collected
+        return {
+            **algo_metrics,
+            **self._episode_metrics(episodes),
+            "throughput/rollout_s": rollout_s,
+            "throughput/update_s": update_s,
+            "throughput/fps": float(segment.valid.sum()) / max(updated - started, 1e-9),
+            "progress/frames": float(self.frames),
+            "progress/iteration": float(self.iteration),
+        }
+
+    @staticmethod
+    def _episode_metrics(episodes: list[EpisodeResult]) -> dict[str, float]:
+        """Termination reason is logged, not just the mean return.
+
+        An episode that ends by leaving the flight envelope is a different event
+        from one that hits the step limit, and a mean return alone hides which.
+        """
+        if not episodes:
+            return {"episode/count": 0.0}
+        returns = [e.ret for e in episodes]
+        return {
+            "episode/count": float(len(episodes)),
+            "episode/return_mean": float(np.mean(returns)),
+            "episode/return_min": float(np.min(returns)),
+            "episode/return_max": float(np.max(returns)),
+            "episode/length_mean": float(np.mean([e.length for e in episodes])),
+            "episode/terminated_frac": float(np.mean([e.terminated for e in episodes])),
+        }
+
+    def _maybe_checkpoint(self) -> None:
+        ckpt = self.cfg.checkpoint
+        due = self.iteration % ckpt.interval_iters == 0
+        eval_due = self.eval_env_fn is not None and self.iteration % ckpt.eval_interval_iters == 0
+        if not (due or eval_due):
+            return
+        eval_return = None
+        if eval_due:
+            eval_return = evaluate_policy(
+                self.algo, self.eval_env_fn, ckpt.eval_episodes, seed=self.cfg.seed
+            )
+            self.tracker.log_metrics(
+                {"eval/return_mean": eval_return}, step=self.algo.global_step
+            )
+        written = self.checkpoints.save(
+            config=self.cfg,
+            algo=self.algo,
+            frames=self.frames,
+            rng_state={"torch": torch.get_rng_state(), "seed": self.cfg.seed},
+            buffer=getattr(self.algo, "buffer", None),
+            eval_return=eval_return,
+        )
+        for path in written:
+            self.tracker.log_artifact(path)

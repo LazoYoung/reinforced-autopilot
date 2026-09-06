@@ -112,6 +112,29 @@ What is in place today:
   generator all restore. It is *not* exact for the workers — environments cannot be
   restored mid-episode — so a resumed run restarts its environments at an episode boundary.
 
+### Viewing runs
+
+Metrics land in a local `./mlruns` file store. This project depends on **`mlflow-skinny`** —
+the client, not the server — because `aero-train` only ever *writes* runs, and full `mlflow`
+drags in a tracking server plus ~40 further distributions that a Ray worker image would carry
+for nothing. One consequence worth knowing: `mlflow server` is listed by `mlflow --help` but
+fails here with `ModuleNotFoundError: No module named 'flask'`.
+
+Run the UI from a throwaway tool environment instead, which leaves the project's own
+dependencies alone:
+
+```sh
+MLFLOW_ALLOW_FILE_STORE=true \
+  uvx --from mlflow mlflow server --backend-store-uri file:./mlruns --port 5000
+```
+
+Then open <http://127.0.0.1:5000>. The `MLFLOW_ALLOW_FILE_STORE=true` is not optional:
+MLflow 3 treats the file store as deprecated and refuses it outright without that opt-in.
+`aero-train` sets the same variable for its own writes.
+
+To use a real tracking server instead, point `MLFLOW_TRACKING_URI` or `tracking.tracking_uri`
+at it — no code change. `tracking.enabled: false` turns tracking off entirely.
+
 ## Defining a scenario
 
 ```python

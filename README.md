@@ -120,17 +120,24 @@ drags in a tracking server plus ~40 further distributions that a Ray worker imag
 for nothing. One consequence worth knowing: `mlflow server` is listed by `mlflow --help` but
 fails here with `ModuleNotFoundError: No module named 'flask'`.
 
-Run the UI from a throwaway tool environment instead, which leaves the project's own
-dependencies alone:
+```sh
+autopilot mlflow
+```
+
+runs the UI against `./mlruns` on <http://127.0.0.1:5000>; `--port`, `--host` and `--store`
+override the defaults, and `--store` accepts either a filesystem path or a full URI
+(e.g. `sqlite:///mlflow.db`) unchanged. Under the hood it runs the UI from a throwaway tool
+environment, which leaves the project's own dependencies alone:
 
 ```sh
 MLFLOW_ALLOW_FILE_STORE=true \
   uvx --from mlflow mlflow server --backend-store-uri file:./mlruns --port 5000
 ```
 
-Then open <http://127.0.0.1:5000>. The `MLFLOW_ALLOW_FILE_STORE=true` is not optional:
-MLflow 3 treats the file store as deprecated and refuses it outright without that opt-in.
-`aero-train` sets the same variable for its own writes.
+The `MLFLOW_ALLOW_FILE_STORE=true` is not optional: MLflow 3 treats the file store as
+deprecated and refuses it outright without that opt-in. `aero-train` sets the same variable
+for its own writes, and `autopilot mlflow` sets it for the server too (without overriding one
+you've already set).
 
 To use a real tracking server instead, point `MLFLOW_TRACKING_URI` or `tracking.tracking_uri`
 at it — no code change. `tracking.enabled: false` turns tracking off entirely.

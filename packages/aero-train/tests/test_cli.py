@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import textwrap
 
 import pytest
@@ -124,3 +125,118 @@ def test_flightgear_eval_reports_that_it_lands_in_phase_2(config_path, tmp_path)
 def test_an_unknown_subcommand_exits_nonzero():
     with pytest.raises(SystemExit):
         cli.main(["fly"])
+
+
+# --- autopilot mlflow -------------------------------------------------------
+#
+# No test here may spawn a subprocess, open a socket, or launch a real MLflow
+# server (project-wide constraint). build_mlflow_server_argv is tested as a
+# pure function; cmd_mlflow (reached through main, so the argparse wiring is
+# covered too) is tested with os.execvp and shutil.which monkeypatched so
+# nothing actually execs.
+
+
+class _FakeExec:
+    """Records an os.execvp call instead of replacing the process image."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def __call__(self, file, args) -> None:
+        self.calls.append((file, list(args)))
+
+
+@pytest.fixture
+def fake_execvp(monkeypatch):
+    fake = _FakeExec()
+    monkeypatch.setattr(cli.os, "execvp", fake)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/uvx")
+    return fake
+
+
+def test_build_mlflow_server_argv_default_store_and_port():
+    argv = cli.build_mlflow_server_argv("./mlruns", "127.0.0.1", 5000)
+    assert argv == [
+        "uvx",
+        "--from",
+        "mlflow",
+        "mlflow",
+        "server",
+        "--backend-store-uri",
+        "file:./mlruns",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5000",
+    ]
+
+
+def test_build_mlflow_server_argv_explicit_path_gets_file_scheme():
+    argv = cli.build_mlflow_server_argv("/data/mlruns", "127.0.0.1", 5000)
+    assert argv[argv.index("--backend-store-uri") + 1] == "file:/data/mlruns"
+
+
+def test_build_mlflow_server_argv_uri_store_passed_through_unchanged():
+    # A value containing "://" is already a URI (sqlite file, remote server)
+    # and must not be re-wrapped in "file:".
+    argv = cli.build_mlflow_server_argv("sqlite:///mlflow.db", "127.0.0.1", 5000)
+    assert argv[argv.index("--backend-store-uri") + 1] == "sqlite:///mlflow.db"
+
+
+def test_build_mlflow_server_argv_honours_host_and_port():
+    argv = cli.build_mlflow_server_argv("./mlruns", "0.0.0.0", 8080)
+    assert argv[argv.index("--host") + 1] == "0.0.0.0"
+    assert argv[argv.index("--port") + 1] == "8080"
+
+
+def test_mlflow_default_argv_via_main(fake_execvp, monkeypatch):
+    monkeypatch.delenv("MLFLOW_ALLOW_FILE_STORE", raising=False)
+    assert cli.main(["mlflow"]) == 0
+    ((_, args),) = fake_execvp.calls
+    assert args == cli.build_mlflow_server_argv("./mlruns", "127.0.0.1", 5000)
+
+
+def test_mlflow_port_and_host_are_honoured(fake_execvp, monkeypatch):
+    monkeypatch.delenv("MLFLOW_ALLOW_FILE_STORE", raising=False)
+    assert cli.main(["mlflow", "--port", "6001", "--host", "0.0.0.0"]) == 0
+    ((_, args),) = fake_execvp.calls
+    assert args == cli.build_mlflow_server_argv("./mlruns", "0.0.0.0", 6001)
+
+
+def test_mlflow_store_path_via_main(fake_execvp, monkeypatch):
+    monkeypatch.delenv("MLFLOW_ALLOW_FILE_STORE", raising=False)
+    cli.main(["mlflow", "--store", "/tmp/store"])
+    ((_, args),) = fake_execvp.calls
+    assert args[args.index("--backend-store-uri") + 1] == "file:/tmp/store"
+
+
+def test_mlflow_store_uri_via_main(fake_execvp, monkeypatch):
+    monkeypatch.delenv("MLFLOW_ALLOW_FILE_STORE", raising=False)
+    cli.main(["mlflow", "--store", "sqlite:///mlflow.db"])
+    ((_, args),) = fake_execvp.calls
+    assert args[args.index("--backend-store-uri") + 1] == "sqlite:///mlflow.db"
+
+
+def test_mlflow_sets_allow_file_store_when_absent(fake_execvp, monkeypatch):
+    monkeypatch.delenv("MLFLOW_ALLOW_FILE_STORE", raising=False)
+    cli.main(["mlflow"])
+    assert os.environ["MLFLOW_ALLOW_FILE_STORE"] == "true"
+
+
+def test_mlflow_respects_an_existing_allow_file_store_value(fake_execvp, monkeypatch):
+    # setdefault semantics: an explicit value the caller already set (e.g. a
+    # shared-host policy) must win over our default, not be overwritten.
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "false")
+    cli.main(["mlflow"])
+    assert os.environ["MLFLOW_ALLOW_FILE_STORE"] == "false"
+
+
+def test_mlflow_missing_uvx_returns_nonzero_and_does_not_raise(monkeypatch, capsys):
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    exec_calls = []
+    monkeypatch.setattr(cli.os, "execvp", lambda *a: exec_calls.append(a))
+    assert cli.main(["mlflow"]) == 1
+    assert exec_calls == []
+    err = capsys.readouterr().err
+    assert "uvx" in err
+    assert "uv" in err

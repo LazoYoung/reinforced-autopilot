@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
+import sys
 from pathlib import Path
 
 import gymnasium as gym
@@ -83,6 +86,58 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_mlflow_server_argv(store: str, host: str, port: int) -> list[str]:
+    """Build the argv for `uvx --from mlflow mlflow server ...`.
+
+    Pure -- no I/O, no env mutation -- so it can be tested without spawning
+    anything. A `store` containing "://" is already a URI (a sqlite file, a
+    real tracking server) and is passed through untouched; otherwise it is a
+    filesystem path and needs the `file:` scheme MLflow expects.
+    """
+    uri = store if "://" in store else f"file:{store}"
+    return [
+        "uvx",
+        "--from",
+        "mlflow",
+        "mlflow",
+        "server",
+        "--backend-store-uri",
+        uri,
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+
+
+def cmd_mlflow(args: argparse.Namespace) -> int:
+    # setdefault, not assignment: an explicit value the caller already set
+    # (e.g. a shared-host MLFLOW_ALLOW_FILE_STORE policy) must win over this
+    # default. MLflowTracker makes the identical tradeoff, for the same
+    # reason -- see its constructor.
+    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+
+    argv = build_mlflow_server_argv(args.store, args.host, args.port)
+
+    uvx = shutil.which("uvx")
+    if uvx is None:
+        manual = " ".join(argv)
+        print(
+            "error: `uvx` not found on PATH -- it ships with uv "
+            "(https://docs.astral.sh/uv/). Run the server manually instead:\n"
+            f"  MLFLOW_ALLOW_FILE_STORE=true {manual}",
+            file=sys.stderr,
+        )
+        return 1
+
+    # exec, not subprocess: this is a foreground server the user Ctrl-C's out
+    # of, and exec gives that the obvious behavior with no wrapper process in
+    # the middle. It never returns on success -- the `return 0` below only
+    # runs under a test's monkeypatched os.execvp.
+    os.execvp(uvx, argv)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autopilot")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -108,6 +163,12 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--episodes", type=int, default=20)
     ev.add_argument("--flightgear", action="store_true")
     ev.set_defaults(func=cmd_eval)
+
+    ml = sub.add_parser("mlflow", help="launch `mlflow server` against the local run store")
+    ml.add_argument("--port", type=int, default=5000)
+    ml.add_argument("--host", default="127.0.0.1")
+    ml.add_argument("--store", default="./mlruns", help="path or URI for --backend-store-uri")
+    ml.set_defaults(func=cmd_mlflow)
 
     return parser
 

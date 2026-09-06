@@ -2,7 +2,7 @@
 
 The Gymnasium env only ever talks to this interface; adding a new flight
 simulator means implementing this class, mapping the canonical
-:class:`~aerogym.variables.FlightVariable` set to the simulator's own
+:class:`~aero_gym.variables.FlightVariable` set to the simulator's own
 properties and units.
 """
 

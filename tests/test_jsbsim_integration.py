@@ -7,10 +7,10 @@ import pytest
 
 jsbsim = pytest.importorskip("jsbsim")
 
-from aerogym import AeroGymEnv
-from aerogym.scenarios import make_steady_flight_scenario
-from aerogym.simulators.jsbsim import JSBSimSimulator
-from aerogym.variables import OBSERVATION_SPECS, FlightVariable as V
+from aero_gym import AeroGymEnv
+from aero_gym.scenarios import make_steady_flight_scenario
+from aero_gym.simulators.jsbsim import JSBSimSimulator
+from aero_gym.variables import OBSERVATION_SPECS, FlightVariable as V
 
 
 @pytest.fixture(scope="module")
@@ -70,7 +70,7 @@ def test_flightgear_output_streams_udp_packets():
     """JSBSim must push native-FDM UDP packets to the configured port."""
     import socket
 
-    from aerogym.scenarios import make_steady_flight_scenario
+    from aero_gym.scenarios import make_steady_flight_scenario
 
     port = 55511
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

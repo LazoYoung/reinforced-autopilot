@@ -1,4 +1,4 @@
-"""JSBSim implementation of the :class:`~aerogym.simulator.Simulator` interface."""
+"""JSBSim implementation of the :class:`~aero_gym.simulator.Simulator` interface."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import math
 import tempfile
 from pathlib import Path
 
-from aerogym.scenario import Scenario
-from aerogym.simulator import Simulator, SimulatorError
-from aerogym.variables import FlightVariable
+from aero_gym.scenario import Scenario
+from aero_gym.simulator import Simulator, SimulatorError
+from aero_gym.variables import FlightVariable
 from .aircraft import profile_for
 from .cockpit import CockpitSync
 from .flightgear import FlightGearViewer
@@ -185,7 +185,7 @@ class JSBSimSimulator(Simulator):
         assert self._visualization is not None
         content = _OUTPUT_DIRECTIVE.format(**self._visualization)
         with tempfile.NamedTemporaryFile(
-            "w", suffix=".xml", prefix="aerogym_fg_", delete=False
+            "w", suffix=".xml", prefix="aero_gym_fg_", delete=False
         ) as fh:
             fh.write(content)
             self._directive_path = Path(fh.name)

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from aerogym.scenario import InitialConditions, Scenario, Transition
-from aerogym.simulators.jsbsim.aircraft import profile_for
-from aerogym.variables import (
+from aero_gym.scenario import InitialConditions, Scenario, Transition
+from aero_gym.simulators.jsbsim.aircraft import profile_for
+from aero_gym.variables import (
     ALL_ACTION_VARIABLES,
     ALL_OBSERVATION_VARIABLES,
     FlightVariable as V,

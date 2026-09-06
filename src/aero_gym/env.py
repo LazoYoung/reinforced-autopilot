@@ -1,4 +1,4 @@
-"""Gymnasium environment generic over any :class:`~aerogym.simulator.Simulator`."""
+"""Gymnasium environment generic over any :class:`~aero_gym.simulator.Simulator`."""
 
 from __future__ import annotations
 

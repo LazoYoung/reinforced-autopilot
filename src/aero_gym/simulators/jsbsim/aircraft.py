@@ -1,6 +1,6 @@
-"""What aerogym needs to know about an aircraft beyond its JSBSim model.
+"""What aero_gym needs to know about an aircraft beyond its JSBSim model.
 
-The JSBSim model name is the key: it is what a :class:`~aerogym.scenario.Scenario`
+The JSBSim model name is the key: it is what a :class:`~aero_gym.scenario.Scenario`
 carries, and everything else an aircraft needs -- what FlightGear calls it, how
 its engines and controls start, what its cockpit reads -- hangs off it here, so
 adding an aircraft means editing one file.
@@ -16,7 +16,7 @@ CockpitFn = Callable[[object, dict[str, float]], dict[str, object]]
 
 
 def _default_startup() -> dict[str, float]:
-    """Engine controls for an aircraft aerogym knows nothing else about.
+    """Engine controls for an aircraft aero_gym knows nothing else about.
 
     Piston-shaped, because a turbine ignores mixture but a piston without it
     will not make power. An unlisted aircraft is better off flying.
@@ -26,7 +26,7 @@ def _default_startup() -> dict[str, float]:
 
 @dataclass(frozen=True)
 class AircraftProfile:
-    """Everything aerogym knows about one JSBSim aircraft model."""
+    """Everything aero_gym knows about one JSBSim aircraft model."""
 
     flightgear: str
     cruise_altitude_ft: float = 5000.0

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aerogym.scenarios import make_steady_flight_scenario
+from aero_gym.scenarios import make_steady_flight_scenario
 
 
 def test_the_flight_condition_follows_the_aircraft():
@@ -36,11 +36,11 @@ def test_the_altitude_target_follows_the_aircrafts_cruise():
     """Reward is measured against the altitude the aircraft actually started at."""
     scenario = make_steady_flight_scenario(aircraft="737")
     obs = {v: 0.0 for v in scenario.observation_variables}
-    from aerogym.variables import FlightVariable as V
+    from aero_gym.variables import FlightVariable as V
 
     obs[V.ALTITUDE] = 30000.0
     obs[V.HEADING] = 270.0
-    from aerogym.scenario import Transition
+    from aero_gym.scenario import Transition
 
     reward, terminated = scenario.reward_fn(Transition(prev_obs=obs, obs=obs, action={}))
     assert reward == pytest.approx(0.0)

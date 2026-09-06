@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from aerogym.scenario import InitialConditions, Scenario, Transition
-from aerogym.simulator import Simulator
-from aerogym.variables import FlightVariable as V
+from aero_gym.scenario import InitialConditions, Scenario, Transition
+from aero_gym.simulator import Simulator
+from aero_gym.variables import FlightVariable as V
 
 
 class FakeSimulator(Simulator):

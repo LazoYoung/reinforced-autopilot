@@ -46,7 +46,7 @@ RewardFn = Callable[[Transition], tuple[float, bool]]
 
 @dataclass(frozen=True)
 class Scenario:
-    """A fully-specified task for :class:`aerogym.env.AeroGymEnv`."""
+    """A fully-specified task for :class:`aero_gym.env.AeroGymEnv`."""
 
     name: str
     initial_conditions: InitialConditions

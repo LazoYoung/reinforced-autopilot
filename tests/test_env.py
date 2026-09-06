@@ -5,9 +5,9 @@ import dataclasses
 import numpy as np
 import pytest
 
-from aerogym import AeroGymEnv
-from aerogym.scenario import Scenario, Transition
-from aerogym.variables import FlightVariable as V
+from aero_gym import AeroGymEnv
+from aero_gym.scenario import Scenario, Transition
+from aero_gym.variables import FlightVariable as V
 
 
 def test_spaces_follow_scenario_selection(initial_conditions, fake_simulator):

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from aerogym.scenario import Scenario
-from aerogym.variables import (
+from aero_gym.scenario import Scenario
+from aero_gym.variables import (
     ACTION_SPECS,
     ALL_ACTION_VARIABLES,
     ALL_OBSERVATION_VARIABLES,

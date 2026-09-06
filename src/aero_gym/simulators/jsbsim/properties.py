@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from aerogym.variables import FlightVariable
+from aero_gym.variables import FlightVariable
 
 FPS_TO_FPM = 60.0
 RAD_TO_DEG = math.degrees(1.0)

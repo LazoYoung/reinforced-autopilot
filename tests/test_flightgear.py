@@ -10,8 +10,8 @@ import types
 
 import pytest
 
-from aerogym.simulators.jsbsim import flightgear
-from aerogym.simulators.jsbsim.flightgear import FlightGearViewer, find_fgfs
+from aero_gym.simulators.jsbsim import flightgear
+from aero_gym.simulators.jsbsim.flightgear import FlightGearViewer, find_fgfs
 
 
 BUNDLE = "/Applications/FlightGear.app"

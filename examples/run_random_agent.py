@@ -11,9 +11,9 @@ import argparse
 
 import numpy as np
 
-from aerogym import AeroGymEnv, FlightVariable
-from aerogym.scenarios import make_steady_flight_scenario
-from aerogym.simulators.jsbsim.aircraft import profile_for
+from aero_gym import AeroGymEnv, FlightVariable
+from aero_gym.scenarios import make_steady_flight_scenario
+from aero_gym.simulators.jsbsim.aircraft import profile_for
 
 
 def main() -> None:

@@ -20,7 +20,7 @@ dev = [
 ]
 
 [tool.uv.build-backend]
-module-name = "aerogym"
+module-name = "aero_gym"
 
 [build-system]
 requires = ["uv_build>=0.12.8,<0.13.0"]

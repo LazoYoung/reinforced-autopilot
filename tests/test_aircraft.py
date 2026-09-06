@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aerogym.simulators.jsbsim.aircraft import PROFILES, profile_for
+from aero_gym.simulators.jsbsim.aircraft import PROFILES, profile_for
 
 
 def test_the_737_is_rendered_by_flightgears_737_300():

@@ -4,7 +4,7 @@ import types
 
 import pytest
 
-from aerogym.simulators.jsbsim.cockpit import CockpitSync
+from aero_gym.simulators.jsbsim.cockpit import CockpitSync
 
 
 class _FakeFDM:

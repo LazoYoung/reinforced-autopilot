@@ -8,7 +8,7 @@ with optional live [FlightGear](https://www.flightgear.org/) visualization.
 
 - **Scenario customization**: each `Scenario` selects which control axes and observations the agent sees, defines the reward function, the initial flight condition, and the aircraft model.
 - **Simulator-agnostic core**: the Gymnasium env talks to `Simulator` interface which abstracts the backend simulator instance.
-- **Aircraft profiles**: everything aerogym needs to know about an aircraft is keyed on its JSBSim model name in one registry, so naming an aircraft is enough to get a flyable task.
+- **Aircraft profiles**: everything aero_gym needs to know about an aircraft is keyed on its JSBSim model name in one registry, so naming an aircraft is enough to get a flyable task.
 - **FlightGear visualization**: JSBSim simulation frames are streamed to FlightGear over UDP, so you can watch the agent fly in real time — with a cockpit that tracks the simulation rather than contradicting it.
 
 ## Installation
@@ -24,8 +24,8 @@ The python wheel includes the JSBSim simulator backend.
 ## Quick start
 
 ```python
-from aerogym import AeroGymEnv
-from aerogym.scenarios import make_steady_flight_scenario
+from aero_gym import AeroGymEnv
+from aero_gym.scenarios import make_steady_flight_scenario
 
 env = AeroGymEnv(make_steady_flight_scenario())          # headless
 # env = AeroGymEnv(..., render_mode="flightgear")        # with visualization
@@ -51,8 +51,8 @@ To use `--flightgear` to visualize the agent, install [FlightGear](https://www.f
 ## Defining a scenario
 
 ```python
-from aerogym.scenario import InitialConditions, Scenario
-from aerogym.variables import FlightVariable as V
+from aero_gym.scenario import InitialConditions, Scenario
+from aero_gym.variables import FlightVariable as V
 
 def my_reward(t):  # t: Transition(prev_obs, obs, action) — dicts keyed by FlightVariable
     reward = -abs(t.obs[V.ROLL]) / 60.0
@@ -88,10 +88,10 @@ Units are canonical across all simulator backends.
 
 ## Aircraft
 
-`Scenario.aircraft` is a JSBSim model name. Everything else aerogym needs to know about an
+`Scenario.aircraft` is a JSBSim model name. Everything else aero_gym needs to know about an
 aircraft — what FlightGear calls it, a cruise it can hold, how its engines and controls start,
 what its cockpit reads — hangs off that name in a single profile registry
-(`src/aerogym/simulators/jsbsim/aircraft.py`). Profiles ship for `c172p` and `737`.
+(`src/aero_gym/simulators/jsbsim/aircraft.py`). Profiles ship for `c172p` and `737`.
 
 Naming an aircraft is therefore enough to get a flyable task: the scenario takes its initial
 altitude and airspeed from the profile when you don't specify them.

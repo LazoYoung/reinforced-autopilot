@@ -97,13 +97,24 @@ def test_a_checkpoint_round_trip_preserves_learner_state(tmp_path):
 def test_dqn_solves_cartpole(tmp_path):
     """The end-to-end proof that the learning stack works at all.
 
+    Asserts on the run's *best* checkpoint, not the final in-memory learner.
+    Vanilla DQN on CartPole finds a high-return policy and then does not hold
+    it -- that is why CheckpointManager retains a best-by-eval-return
+    checkpoint alongside the latest one, and it is why the real workflow is
+    `autopilot run` followed by `autopilot eval <best checkpoint>`. Asserting
+    on the final learner would test "vanilla DQN converges stably on CartPole
+    on a single seed," which is false and not this test's claim. The claim is
+    that the best checkpoint the run produces, reloaded the way `autopilot
+    eval` reloads it, clears the bar -- so this test exercises save -> load ->
+    eval, not just train -> eval.
+
     Deselected by default (`-m 'not slow'`). Run it with:
         uv run pytest -m slow packages/aero-train/tests/test_integration.py
     """
     algo_cfg = DQNConfig(
         hidden_sizes=(128, 128), lr=5e-4, gamma=0.99, n_step=1,
         buffer_size=50_000, warmup_frames=1_000, batch_size=64,
-        target_sync_interval=500, updates_per_iter=4,
+        target_sync_interval=500, updates_per_iter=32,
         epsilon_start=1.0, epsilon_final=0.02, epsilon_decay_frames=20_000,
     )
     cfg = TrainConfig(
@@ -127,11 +138,25 @@ def test_dqn_solves_cartpole(tmp_path):
 
     engine = LocalRolloutEngine(env_fn, algo.make_agent(), cfg.rollout.envs_per_worker, cfg.seed)
     tracker = RecordingTracker()
-    Trainer(cfg, algo, engine, tracker, CheckpointManager(tmp_path, cfg.checkpoint),
-            eval_env_fn=env_fn).run()
+    checkpoints = CheckpointManager(tmp_path, cfg.checkpoint)
+    Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=env_fn).run()
 
-    final = evaluate_policy(algo, env_fn, episodes=20, seed=1234)
+    assert checkpoints.best_path.exists(), (
+        "no best checkpoint was written -- eval_interval_iters never fired during "
+        f"the run (total_steps={cfg.total_steps}, frames_per_iter={cfg.rollout.frames_per_iter})"
+    )
+    payload = load_checkpoint(checkpoints.best_path)
+    best = DQN(
+        obs_shape=algo.obs_shape, n_actions=algo.n_actions,
+        cfg=algo_cfg, device=cfg.device, seed=cfg.seed,
+    )
+    best.load_state_dict(payload["algo"])
+
+    # 20 episodes, independent of the 5-episode eval that selected this
+    # checkpoint -- selection was made on a noisy small sample, so this is
+    # what actually makes the reported number trustworthy
+    final = evaluate_policy(best, env_fn, episodes=20, seed=1234)
     assert final >= 195.0, (
-        f"DQN reached only {final:.1f} on CartPole-v1 after {cfg.total_steps} frames; "
-        "the learning stack is not working end to end"
+        f"DQN's best checkpoint reached only {final:.1f} on CartPole-v1 after "
+        f"{cfg.total_steps} frames; the learning stack is not working end to end"
     )

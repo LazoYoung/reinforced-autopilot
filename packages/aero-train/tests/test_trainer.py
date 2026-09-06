@@ -225,6 +225,36 @@ def test_a_checkpoint_is_written_on_the_configured_interval(tmp_path):
     assert tracker.artifacts.count(mgr.latest_path) == 2
 
 
+def test_the_final_iteration_is_checkpointed_even_off_cadence(tmp_path):
+    # long episodes, so the iteration count (4) is exact and predictable.
+    # interval_iters=3 divides neither into nor evenly by 4, so cadence alone
+    # writes a checkpoint at iteration 3 and never again -- without an
+    # unconditional end-of-run save, latest.pt would be stuck at iteration 3's
+    # state (48 frames) even though the run actually collected 64.
+    cfg = make_cfg(interval_iters=3, eval_interval_iters=100)
+    trainer, algo, tracker, mgr = make_trainer(tmp_path, cfg, episode_len=1000)
+    trainer.run()
+    assert mgr.latest_path.exists()
+    payload = load_checkpoint(mgr.latest_path)
+    assert payload["frames"] == trainer.frames == 64
+    assert payload["global_step"] == algo.global_step
+    # one write at the cadence hit (iteration 3), one forced at the run's end
+    # (iteration 4) -- a bug that skips the forced save leaves this at 1
+    assert tracker.artifacts.count(mgr.latest_path) == 2
+
+
+def test_a_run_shorter_than_the_checkpoint_interval_still_saves_one(tmp_path):
+    # interval_iters (10) exceeds the run's own iteration count (2 -- 17 frames
+    # at 16/iteration), so cadence never fires at all: before the end-of-run
+    # save this configuration wrote nothing and exited 0.
+    cfg = make_cfg(total_steps=17, interval_iters=10, eval_interval_iters=100)
+    trainer, algo, tracker, mgr = make_trainer(tmp_path, cfg, episode_len=1000)
+    trainer.run()
+    assert mgr.latest_path.exists()
+    assert load_checkpoint(mgr.latest_path)["frames"] == trainer.frames
+    assert mgr.latest_path in tracker.artifacts
+
+
 def test_evaluation_drives_the_best_checkpoint(tmp_path):
     # long episodes, so the iteration count (4) is exact and predictable
     cfg = make_cfg(interval_iters=100, eval_interval_iters=2)

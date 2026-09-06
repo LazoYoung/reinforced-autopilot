@@ -96,10 +96,22 @@ class Trainer:
     def run(self) -> None:
         self.tracker.log_params(self.cfg)
         try:
+            # True until the loop runs at least one iteration whose own cadence
+            # (interval_iters / eval_interval_iters) did NOT already checkpoint --
+            # tracks whether the final iteration's state still needs saving below.
+            final_iteration_checkpointed = True
             while self.frames < self.cfg.total_steps:
                 metrics = self._iterate()
                 self.tracker.log_metrics(metrics, step=self.algo.global_step)
-                self._maybe_checkpoint()
+                final_iteration_checkpointed = self._maybe_checkpoint()
+            if not final_iteration_checkpointed:
+                # interval_iters has no reason to land on a run's last iteration,
+                # so without this the tail of every run -- and the entirety of a
+                # run shorter than interval_iters -- is silently discarded. Force
+                # an eval alongside it (when there is an eval env) so the
+                # best-checkpoint bookkeeping gets a chance to see the final
+                # policy too, not just whichever interval iteration preceded it.
+                self._checkpoint(eval_due=self.eval_env_fn is not None)
         finally:
             self.engine.close()
             self.tracker.close()
@@ -149,16 +161,26 @@ class Trainer:
             "episode/terminated_frac": float(np.mean([e.terminated for e in episodes])),
         }
 
-    def _maybe_checkpoint(self) -> None:
+    def _maybe_checkpoint(self) -> bool:
+        """Save if this iteration's cadence calls for it. Returns whether it did.
+
+        The return value is how run() knows whether the final iteration already
+        covered the end-of-run save, so that save is not repeated on top of an
+        identical, just-written state.
+        """
         ckpt = self.cfg.checkpoint
         due = self.iteration % ckpt.interval_iters == 0
         eval_due = self.eval_env_fn is not None and self.iteration % ckpt.eval_interval_iters == 0
         if not (due or eval_due):
-            return
+            return False
+        self._checkpoint(eval_due=eval_due)
+        return True
+
+    def _checkpoint(self, *, eval_due: bool) -> None:
         eval_return = None
         if eval_due:
             eval_return = evaluate_policy(
-                self.algo, self.eval_env_fn, ckpt.eval_episodes, seed=self.cfg.seed
+                self.algo, self.eval_env_fn, self.cfg.checkpoint.eval_episodes, seed=self.cfg.seed
             )
             self.tracker.log_metrics(
                 {"eval/return_mean": eval_return}, step=self.algo.global_step

@@ -116,9 +116,10 @@ def to_transitions(segment: Segment, gamma: float, n_step: int = 1) -> Transitio
     Gymnasium's next-step autoreset that observation is already sitting at
     obs[t + 1]; nothing has to be stashed.
 
-    A Python loop over T x B is fine at this scale (128 x 8 rows per iteration
-    against a flight model that costs milliseconds per step); vectorize only if
-    a profile says to.
+    Cost is O(T * B * n_step), not just O(T * B): each of the T * B valid rows
+    walks up to n_step rows ahead. That is fine at this scale (128 x 8 x 3 is a
+    few thousand inner iterations per collect(), against a flight model that
+    costs milliseconds per step); vectorize only if a profile says to.
     """
     if n_step < 1:
         raise ValueError(f"n_step must be >= 1, got {n_step}")
@@ -150,11 +151,23 @@ def to_transitions(segment: Segment, gamma: float, n_step: int = 1) -> Transitio
             terminated.append(hit_terminal)
             steps.append(taken)
 
+    # np.asarray([], dtype) collapses to shape (0,), dropping the trailing
+    # obs_dim / act_shape axes an empty (all-invalid) segment still owns.
+    # Task 12 concatenates Transitions across segments, so a degenerate shape
+    # here would break concatenation instead of contributing zero rows.
+    obs_shape = segment.obs.shape[2:]
+    act_shape = segment.actions.shape[2:]
+
+    def _stack(rows: list, trailing_shape: tuple[int, ...], dtype) -> np.ndarray:
+        if rows:
+            return np.asarray(rows, dtype)
+        return np.empty((0, *trailing_shape), dtype)
+
     return Transitions(
-        obs=np.asarray(obs, np.float32),
-        actions=np.asarray(actions, segment.actions.dtype),
+        obs=_stack(obs, obs_shape, np.float32),
+        actions=_stack(actions, act_shape, segment.actions.dtype),
         returns=np.asarray(returns, np.float32),
-        next_obs=np.asarray(next_obs, np.float32),
+        next_obs=_stack(next_obs, obs_shape, np.float32),
         terminated=np.asarray(terminated, bool),
         steps=np.asarray(steps, np.int32),
     )

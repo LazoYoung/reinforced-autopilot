@@ -161,7 +161,14 @@ def test_bootstrap_obs_of_a_terminating_step_is_the_true_final_obs():
     src.close()
 
 
-def test_autoreset_step_contributes_no_reward():
+def test_the_autoreset_row_contributes_no_reward_to_the_segment():
+    # Gymnasium's own NEXT_STEP autoreset already returns reward=0.0 on the
+    # fabricated step, so this mostly pins that fact rather than exercising
+    # collect()'s own `np.where(live, reward, 0.0)` masking. That masking is
+    # kept anyway as the local, explicit statement of the invariant: it
+    # protects a future consumer that reads seg.rewards unmasked (Task 15's
+    # GAE), and it turns a change in Gymnasium's autoreset behaviour into a
+    # loud Segment.__post_init__ error instead of silent corruption.
     src = make_source(n_envs=1, episode_len=4)
     seg, _ = src.collect(6)
     assert seg.rewards[:, 0].tolist() == [1.0, 1.0, 1.0, 1.0, 0.0, 1.0]

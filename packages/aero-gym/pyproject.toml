@@ -1,0 +1,23 @@
+[project]
+name = "aero-gym"
+version = "0.1.0"
+description = "Simulator-agnostic Gymnasium environments for fixed-wing flight control"
+# no `readme` key: a path outside the package root (../../README.md) breaks the
+# sdist -> wheel build, because the sdist only contains files under this
+# directory. See "Keeping independent publishing possible" above.
+authors = [
+    { name = "Chanyeong Park", email = "idealproduction@naver.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium>=1.3.0",
+    "jsbsim>=1.3.1",
+    "numpy>=2.5.2",
+]
+
+[tool.uv.build-backend]
+module-name = "aero_gym"
+
+[build-system]
+requires = ["uv_build>=0.12.8,<0.13.0"]
+build-backend = "uv_build"

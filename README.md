@@ -91,7 +91,7 @@ Units are canonical across all simulator backends.
 `Scenario.aircraft` is a JSBSim model name. Everything else aero_gym needs to know about an
 aircraft — what FlightGear calls it, a cruise it can hold, how its engines and controls start,
 what its cockpit reads — hangs off that name in a single profile registry
-(`src/aero_gym/simulators/jsbsim/aircraft.py`). Profiles ship for `c172p` and `737`.
+(`packages/aero-gym/src/aero_gym/simulators/jsbsim/aircraft.py`). Profiles ship for `c172p` and `737`.
 
 Naming an aircraft is therefore enough to get a flyable task: the scenario takes its initial
 altitude and airspeed from the profile when you don't specify them.

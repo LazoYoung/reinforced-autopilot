@@ -17,3 +17,7 @@ wheels/
 docs/superpowers/
 docs/adr/
 CLAUDE.md
+
+# Training run artifacts
+runs/
+mlruns/

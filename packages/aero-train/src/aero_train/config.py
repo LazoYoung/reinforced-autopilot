@@ -62,6 +62,11 @@ class DQNConfig:
             raise ValueError("algo.batch_size cannot exceed algo.buffer_size")
         if self.warmup_frames < self.batch_size:
             raise ValueError("algo.warmup_frames must be at least algo.batch_size")
+        if self.warmup_frames > self.buffer_size:
+            # the ring buffer caps at buffer_size, so len(buffer) could never
+            # reach a larger warmup_frames -- update() would return None forever
+            # and the run would silently never take a gradient step
+            raise ValueError("algo.warmup_frames cannot exceed algo.buffer_size")
         if not self.epsilon_final <= self.epsilon_start:
             raise ValueError("algo.epsilon_final must not exceed algo.epsilon_start")
         if self.epsilon_decay_frames < 1:

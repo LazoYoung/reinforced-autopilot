@@ -67,6 +67,16 @@ def test_total_steps_below_warmup_raises():
         config_from_dict({**MINIMAL, "total_steps": 100, "algo": {"type": "dqn", "warmup_frames": 1000}})
 
 
+def test_warmup_above_buffer_size_raises():
+    # warmup_frames > buffer_size means len(buffer) can never reach warmup_frames
+    # -- the ring buffer caps at buffer_size -- so update() would return None
+    # forever and the run would silently never take a gradient step.
+    with pytest.raises(ValueError, match="warmup_frames cannot exceed"):
+        config_from_dict(
+            {**MINIMAL, "algo": {"type": "dqn", "buffer_size": 100, "warmup_frames": 200}}
+        )
+
+
 def test_local_engine_rejects_multiple_workers():
     with pytest.raises(ValueError, match="n_workers"):
         config_from_dict({**MINIMAL, "rollout": {"engine": "local", "n_workers": 4}})

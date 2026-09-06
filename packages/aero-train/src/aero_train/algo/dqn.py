@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import numpy as np
@@ -156,8 +157,12 @@ class DQN(Algorithm):
             self._global_step += 1
             if self._global_step % self.cfg.target_sync_interval == 0:
                 self.target.sync()
-            losses.append(float(loss))
-            q_means.append(float(q_taken.mean()))
+            # .item(), not float(): loss and q_taken still require grad here, and
+            # float() on a tensor with requires_grad=True warns even though the
+            # graph is already freed by backward() above and only the number
+            # survives either way.
+            losses.append(loss.item())
+            q_means.append(q_taken.mean().item())
             grad_norms.append(float(grad_norm))
         return {
             "loss": float(np.mean(losses)),
@@ -191,15 +196,20 @@ class DQN(Algorithm):
             return returns + (self.cfg.gamma**steps) * next_q
 
     def state_dict(self) -> dict[str, Any]:
+        # deepcopy, not the raw state dicts: nn.Module.state_dict() detaches
+        # each tensor but does not clone it, so it aliases the same storage as
+        # the live parameter -- training on past this snapshot would move the
+        # numbers inside it too. Same class of bug as ReplayBuffer.state_dict,
+        # fixed the same way there.
         return {
-            "net": self.net.state_dict(),
-            "target": self.target.target_model.state_dict(),
-            "optimizer": self.optimizer.state_dict(),
+            "net": copy.deepcopy(self.net.state_dict()),
+            "target": copy.deepcopy(self.target.target_model.state_dict()),
+            "optimizer": copy.deepcopy(self.optimizer.state_dict()),
             "frames": self._frames,
             "global_step": self._global_step,
             # without the sampler state a resumed run draws a different replay
             # sequence from the same buffer and the curve diverges
-            "buffer_rng": self.buffer.rng.bit_generator.state,
+            "buffer_rng": copy.deepcopy(self.buffer.rng.bit_generator.state),
         }
 
     def load_state_dict(self, sd: dict[str, Any]) -> None:

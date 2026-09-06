@@ -34,6 +34,19 @@ def test_hidden_sizes_coerced_from_yaml_list_to_tuple():
     assert cfg.algo.hidden_sizes == (32, 16)
 
 
+def test_hidden_sizes_rejects_non_integer_values():
+    # A float would silently truncate (3.7 -> 3), giving a network with different
+    # layer widths than the config asked for; that must fail loudly instead.
+    with pytest.raises(ValueError, match="hidden_sizes"):
+        config_from_dict({**MINIMAL, "algo": {"type": "dqn", "hidden_sizes": [3.7, 2.2]}})
+
+
+def test_hidden_sizes_rejects_bools():
+    # bool is a subclass of int in Python, so this must be excluded explicitly.
+    with pytest.raises(ValueError, match="hidden_sizes"):
+        config_from_dict({**MINIMAL, "algo": {"type": "dqn", "hidden_sizes": [True]}})
+
+
 def test_unknown_key_raises_type_error():
     with pytest.raises(TypeError, match="lr_rate"):
         config_from_dict({**MINIMAL, "algo": {"type": "dqn", "lr_rate": 0.1}})

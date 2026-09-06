@@ -45,8 +45,13 @@ class DQNConfig:
     epsilon_decay_frames: int = 20_000
 
     def __post_init__(self) -> None:
+        # Reject non-ints before coercing, so a float like 3.7 fails loudly instead
+        # of being silently truncated into a network with the wrong layer widths.
+        # bool is a subclass of int in Python, so True/False must be excluded too.
+        if any(isinstance(h, bool) or not isinstance(h, int) for h in self.hidden_sizes):
+            raise ValueError("algo.hidden_sizes must be a non-empty list of positive ints")
         # YAML gives a list; the rest of the code wants an immutable tuple
-        object.__setattr__(self, "hidden_sizes", tuple(int(h) for h in self.hidden_sizes))
+        object.__setattr__(self, "hidden_sizes", tuple(self.hidden_sizes))
         if not self.hidden_sizes or any(h <= 0 for h in self.hidden_sizes):
             raise ValueError("algo.hidden_sizes must be a non-empty list of positive ints")
         if not 0.0 < self.gamma <= 1.0:

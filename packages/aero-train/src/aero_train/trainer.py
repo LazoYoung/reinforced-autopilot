@@ -22,11 +22,23 @@ from .rollout import RolloutEngine
 from .tracking import Tracker
 
 
+DEFAULT_EVAL_MAX_STEPS = 10_000
+"""Generous cap on a single evaluation episode.
+
+Every scenario in this phase carries its own time limit, so this should never
+trip. It exists because evaluate_policy is called from
+Trainer._maybe_checkpoint: an eval env missing a time limit would otherwise
+spin `while not done` forever and silently hang the whole training run, with
+no diagnostic pointing at the eval env being the cause.
+"""
+
+
 def evaluate_policy(
     algo: Algorithm,
     env_fn: Callable[[], gym.Env],
     episodes: int,
     seed: int = 0,
+    max_steps: int = DEFAULT_EVAL_MAX_STEPS,
 ) -> float:
     """Mean return over `episodes` greedy episodes in a single environment.
 
@@ -43,12 +55,19 @@ def evaluate_policy(
     try:
         for i in range(episodes):
             obs, _ = env.reset(seed=seed + i)
-            total, done = 0.0, False
+            total, done, steps = 0.0, False, 0
             while not done:
                 actions, _ = agent(np.asarray(obs, np.float32)[None, ...])
                 obs, reward, terminated, truncated, _ = env.step(actions[0].item())
                 total += float(reward)
+                steps += 1
                 done = bool(terminated or truncated)
+                if not done and steps >= max_steps:
+                    raise RuntimeError(
+                        f"evaluate_policy: episode {i} ran {steps} steps without "
+                        f"terminating or truncating (cap max_steps={max_steps}); "
+                        "the eval env likely has no time limit"
+                    )
             returns.append(total)
     finally:
         env.close()

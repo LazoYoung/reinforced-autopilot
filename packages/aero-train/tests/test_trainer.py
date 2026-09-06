@@ -107,9 +107,32 @@ def test_weights_are_broadcast_to_the_engine_every_iteration(tmp_path):
         assert call.keys() == algo.actor_state_dict().keys()
 
 
+class _CountingParamsTracker(RecordingTracker):
+    """RecordingTracker.params is a dict that a repeated call simply
+    overwrites, so it cannot tell "logged once" from "logged every iteration".
+    This subclass counts calls instead, without touching conftest.py.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.log_params_calls = 0
+
+    def log_params(self, cfg) -> None:
+        self.log_params_calls += 1
+        super().log_params(cfg)
+
+
 def test_params_are_logged_exactly_once(tmp_path):
-    trainer, _, tracker, _ = make_trainer(tmp_path)
+    cfg = make_cfg()
+    algo = DQN(obs_shape=(1,), n_actions=2, cfg=cfg.algo, seed=cfg.seed)
+    engine = LocalRolloutEngine(
+        env_fn(), algo.make_agent(), cfg.rollout.envs_per_worker, cfg.seed
+    )
+    tracker = _CountingParamsTracker()
+    mgr = CheckpointManager(tmp_path, cfg.checkpoint)
+    trainer = Trainer(cfg, algo, engine, tracker, mgr)
     trainer.run()
+    assert tracker.log_params_calls == 1
     assert tracker.params["run_name"] == "trainer-run"
 
 
@@ -156,11 +179,19 @@ def test_iterations_before_warmup_still_log_episodes(tmp_path):
     # update() returns None while the buffer fills; the loop must not skip logging.
     # total_steps must exceed warmup_frames (16) or TrainConfig.__post_init__
     # rejects the config outright -- 17 is the smallest value that still keeps
-    # the run mostly inside warmup.
+    # iteration 1 inside warmup.
     cfg = make_cfg(total_steps=17)
-    trainer, _, tracker, _ = make_trainer(tmp_path, cfg)
+    trainer, algo, tracker, _ = make_trainer(tmp_path, cfg)
     trainer.run()
-    assert tracker.metric_series("episode/count")
+    # Scope the assertion to the warmup iteration itself. A filter over the
+    # whole run (metric_series) is satisfied as soon as ANY iteration logs
+    # episode/count -- with this config the run has 2 iterations and only the
+    # first is in warmup, so a bug that skips logging during warmup specifically
+    # would still leave a whole-run filter green via iteration 2 alone.
+    warmup_metrics, warmup_step = tracker.metrics[0]
+    assert warmup_step == 0          # no gradient step taken yet -- confirms warmup
+    assert "loss" not in warmup_metrics  # confirms update() really returned None here
+    assert warmup_metrics.get("episode/count")
 
 
 def test_only_valid_frames_count_towards_the_budget(tmp_path):
@@ -169,6 +200,14 @@ def test_only_valid_frames_count_towards_the_budget(tmp_path):
     trainer.run()
     assert trainer.frames == algo.frames
     assert trainer.frames < trainer.iteration * 16
+
+
+def test_progress_metrics_track_frames_and_iteration(tmp_path):
+    # long episodes, so frames/iteration progression is exact and predictable
+    trainer, _, tracker, _ = make_trainer(tmp_path, episode_len=1000)
+    trainer.run()
+    assert tracker.metric_series("progress/frames") == [16.0, 32.0, 48.0, 64.0]
+    assert tracker.metric_series("progress/iteration") == [1.0, 2.0, 3.0, 4.0]
 
 
 def test_a_checkpoint_is_written_on_the_configured_interval(tmp_path):
@@ -189,7 +228,7 @@ def test_a_checkpoint_is_written_on_the_configured_interval(tmp_path):
 def test_evaluation_drives_the_best_checkpoint(tmp_path):
     # long episodes, so the iteration count (4) is exact and predictable
     cfg = make_cfg(interval_iters=100, eval_interval_iters=2)
-    trainer, _, tracker, mgr = make_trainer(
+    trainer, algo, tracker, mgr = make_trainer(
         tmp_path, cfg, episode_len=1000, eval_env_fn=env_fn()
     )
     trainer.run()
@@ -198,6 +237,12 @@ def test_evaluation_drives_the_best_checkpoint(tmp_path):
     # exactly at iterations 2 and 4 -- an eval-every-iteration bug would still
     # produce a best checkpoint, so the count is what catches the wrong cadence
     assert len(tracker.metric_series("eval/return_mean")) == 2
+    # the eval log call is a second, independent log_metrics call site from the
+    # main per-iteration one; it must also key off the learner's global_step
+    # (2 updates_per_iter x iterations 2 and 4 = 4 and 8), not the iteration
+    # index -- the two call sites can drift independently, so both need pinning
+    eval_steps = [step for m, step in tracker.metrics if "eval/return_mean" in m]
+    assert eval_steps == [4, 8]
 
 
 def test_tracker_and_engine_are_closed(tmp_path):
@@ -242,3 +287,31 @@ def test_evaluate_policy_is_greedy_and_returns_a_mean_return():
     mean_return = evaluate_policy(algo, env_fn(episode_len=5), episodes=3)
     assert mean_return == pytest.approx(5.0)   # CountingEnv pays 1.0 per step
     assert float(algo.last_sync[SELECTOR_PREFIX + "epsilon"]) == 0.0
+
+
+class _NeverEndingEnv(gym.Env):
+    """An env with no time limit, purely to prove evaluate_policy's step cap
+    trips. Not in conftest.py: every real scenario has a time limit, so no
+    other test needs an env that lacks one.
+    """
+
+    metadata = {"render_modes": []}
+
+    def __init__(self) -> None:
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, (1,), np.float32)
+        self.action_space = gym.spaces.Discrete(2)
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        return np.array([0.0], np.float32), {}
+
+    def step(self, action):
+        return np.array([0.0], np.float32), 0.0, False, False, {}
+
+
+def test_evaluate_policy_caps_a_runaway_episode():
+    # evaluate_policy is called from Trainer._maybe_checkpoint, so an eval env
+    # missing a time limit must not hang the whole training run silently
+    algo = DQN(obs_shape=(1,), n_actions=2, cfg=ALGO, seed=0)
+    with pytest.raises(RuntimeError, match="time limit"):
+        evaluate_policy(algo, _NeverEndingEnv, episodes=1, max_steps=5)

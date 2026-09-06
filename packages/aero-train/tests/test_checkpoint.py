@@ -26,10 +26,6 @@ def make_algo():
     return DQN(obs_shape=(4,), n_actions=2, cfg=ALGO_CFG, seed=0)
 
 
-def rng_state():
-    return {"torch": torch.get_rng_state(), "seed": 0}
-
-
 def test_save_and_load_round_trip(tmp_path):
     path = tmp_path / "c.pt"
     save_checkpoint(path, {"global_step": 7, "note": "hello"})
@@ -68,7 +64,7 @@ def test_a_failed_save_leaves_the_previous_checkpoint_intact(tmp_path, monkeypat
 def test_manager_writes_latest_on_every_save(tmp_path):
     mgr = CheckpointManager(tmp_path, CheckpointConfig())
     algo = make_algo()
-    written = mgr.save(config=make_cfg(), algo=algo, frames=100, rng_state=rng_state())
+    written = mgr.save(config=make_cfg(), algo=algo, frames=100)
     assert written == [mgr.latest_path]
     assert mgr.latest_path.exists()
 
@@ -76,27 +72,30 @@ def test_manager_writes_latest_on_every_save(tmp_path):
 def test_checkpoint_carries_the_config_and_the_counters(tmp_path):
     mgr = CheckpointManager(tmp_path, CheckpointConfig())
     algo = make_algo()
-    mgr.save(config=make_cfg(), algo=algo, frames=123, rng_state=rng_state())
+    mgr.save(config=make_cfg(), algo=algo, frames=123)
     payload = load_checkpoint(mgr.latest_path)
     assert payload["frames"] == 123
     assert payload["global_step"] == algo.global_step
     assert payload["config"]["run_name"] == "ckpt-run"
-    assert "torch" in payload["rng"]
+    # nothing in this codebase reads torch's global RNG state back out of a
+    # checkpoint -- DQN.state_dict() already carries everything the learner's
+    # own math depends on -- so the payload must not carry it either
+    assert "rng" not in payload
 
 
 def test_best_is_written_only_when_the_return_improves(tmp_path):
     mgr = CheckpointManager(tmp_path, CheckpointConfig())
     algo, cfg = make_algo(), make_cfg()
-    assert mgr.best_path in mgr.save(config=cfg, algo=algo, frames=1, rng_state=rng_state(), eval_return=10.0)
-    assert mgr.best_path not in mgr.save(config=cfg, algo=algo, frames=2, rng_state=rng_state(), eval_return=5.0)
-    assert mgr.best_path in mgr.save(config=cfg, algo=algo, frames=3, rng_state=rng_state(), eval_return=20.0)
+    assert mgr.best_path in mgr.save(config=cfg, algo=algo, frames=1, eval_return=10.0)
+    assert mgr.best_path not in mgr.save(config=cfg, algo=algo, frames=2, eval_return=5.0)
+    assert mgr.best_path in mgr.save(config=cfg, algo=algo, frames=3, eval_return=20.0)
     assert mgr.best_return == 20.0
 
 
 def test_best_return_is_persisted_in_the_payload(tmp_path):
     mgr = CheckpointManager(tmp_path, CheckpointConfig())
     algo, cfg = make_algo(), make_cfg()
-    mgr.save(config=cfg, algo=algo, frames=1, rng_state=rng_state(), eval_return=42.0)
+    mgr.save(config=cfg, algo=algo, frames=1, eval_return=42.0)
     assert load_checkpoint(mgr.latest_path)["best_return"] == 42.0
 
 
@@ -107,12 +106,12 @@ def test_a_manager_seeded_with_a_prior_best_return_does_not_overwrite_a_better_b
     # the very next eval -- however bad -- would beat it and overwrite best.pt.
     mgr = CheckpointManager(tmp_path, CheckpointConfig(), best_return=50.0)
     algo, cfg = make_algo(), make_cfg()
-    written = mgr.save(config=cfg, algo=algo, frames=1, rng_state=rng_state(), eval_return=10.0)
+    written = mgr.save(config=cfg, algo=algo, frames=1, eval_return=10.0)
     assert mgr.best_path not in written
     assert mgr.best_return == 50.0
 
     # a genuine improvement still updates it
-    written = mgr.save(config=cfg, algo=algo, frames=2, rng_state=rng_state(), eval_return=75.0)
+    written = mgr.save(config=cfg, algo=algo, frames=2, eval_return=75.0)
     assert mgr.best_path in written
     assert mgr.best_return == 75.0
 
@@ -121,7 +120,7 @@ def test_only_two_checkpoints_are_ever_retained(tmp_path):
     mgr = CheckpointManager(tmp_path, CheckpointConfig())
     algo, cfg = make_algo(), make_cfg()
     for i in range(5):
-        mgr.save(config=cfg, algo=algo, frames=i, rng_state=rng_state(), eval_return=float(i))
+        mgr.save(config=cfg, algo=algo, frames=i, eval_return=float(i))
     assert sorted(p.name for p in tmp_path.iterdir()) == ["best.pt", "latest.pt"]
 
 
@@ -138,11 +137,11 @@ def test_buffer_is_omitted_unless_include_buffer_is_set(tmp_path):
         )
     )
     mgr = CheckpointManager(tmp_path / "a", CheckpointConfig(include_buffer=False))
-    mgr.save(config=make_cfg(), algo=make_algo(), frames=1, rng_state=rng_state(), buffer=buf)
+    mgr.save(config=make_cfg(), algo=make_algo(), frames=1, buffer=buf)
     assert load_checkpoint(mgr.latest_path)["buffer"] is None
 
     mgr2 = CheckpointManager(tmp_path / "b", CheckpointConfig(include_buffer=True))
-    mgr2.save(config=make_cfg(include_buffer=True), algo=make_algo(), frames=1, rng_state=rng_state(), buffer=buf)
+    mgr2.save(config=make_cfg(include_buffer=True), algo=make_algo(), frames=1, buffer=buf)
     assert load_checkpoint(mgr2.latest_path)["buffer"]["size"] == 3
 
 
@@ -153,7 +152,7 @@ def test_a_checkpoint_restores_a_fresh_algorithm(tmp_path):
         for p in algo.net.parameters():
             p.fill_(0.25)
     algo._global_step = 42
-    mgr.save(config=make_cfg(), algo=algo, frames=99, rng_state=rng_state())
+    mgr.save(config=make_cfg(), algo=algo, frames=99)
 
     restored = make_algo()
     restored.load_state_dict(load_checkpoint(mgr.latest_path)["algo"])

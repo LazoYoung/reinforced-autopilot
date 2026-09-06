@@ -12,7 +12,6 @@ from typing import Callable
 
 import gymnasium as gym
 import numpy as np
-import torch
 
 from .algo.base import Algorithm
 from .checkpoint import CheckpointManager
@@ -189,7 +188,6 @@ class Trainer:
             config=self.cfg,
             algo=self.algo,
             frames=self.frames,
-            rng_state={"torch": torch.get_rng_state(), "seed": self.cfg.seed},
             buffer=getattr(self.algo, "buffer", None),
             eval_return=eval_return,
         )

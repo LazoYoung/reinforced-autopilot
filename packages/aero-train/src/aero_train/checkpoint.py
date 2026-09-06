@@ -1,10 +1,13 @@
 """Atomic checkpoint save/load and a two-slot retention policy.
 
-Resume is exact for the learner. It is approximate for the workers if the
-worker count changed between save and resume, because SeedSequence partitions
-the random streams by topology: same seed plus same topology reproduces a run
-exactly, a different topology does not. This is stated here rather than left to
-be discovered from a diverging learning curve.
+Resume is exact for the learner: `algo.state_dict()` carries every number the
+learner's own math depends on (network weights, optimizer state, the replay
+sampler's generator), so nothing here needs to duplicate an RNG snapshot on
+top of it. It is approximate for the workers if the worker count changed
+between save and resume, because SeedSequence partitions the random streams by
+topology: same seed plus same topology reproduces a run exactly, a different
+topology does not. This is stated here rather than left to be discovered from
+a diverging learning curve.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ def save_checkpoint(path: Path, payload: dict[str, Any]) -> None:
 
 
 def load_checkpoint(path: Path) -> dict[str, Any]:
-    # weights_only=False: the payload carries the config dict, RNG state and (when
+    # weights_only=False: the payload carries the config dict and (when
     # include_buffer is set) a numpy-backed buffer snapshot -- not just tensors --
     # so torch 2.6+'s weights_only=True default would refuse to unpickle it.
     # Safe here because these checkpoints are only ever written by this project's
@@ -77,7 +80,6 @@ class CheckpointManager:
         config: TrainConfig,
         algo: Algorithm,
         frames: int,
-        rng_state: dict[str, Any],
         buffer: ReplayBuffer | None = None,
         eval_return: float | None = None,
     ) -> list[Path]:
@@ -92,7 +94,6 @@ class CheckpointManager:
             "algo": algo.state_dict(),
             "global_step": algo.global_step,
             "frames": int(frames),
-            "rng": rng_state,
             # persisted so a resumed CheckpointManager can be seeded with it --
             # otherwise resume starts back at -inf and the first eval after
             # resuming unconditionally overwrites best.pt

@@ -15,6 +15,16 @@ from typing import Any
 
 import numpy as np
 
+SELECTOR_PREFIX = "selector."
+"""Reserved key prefix inside an actor_state_dict.
+
+Keys under it are exploration parameters (epsilon, sigma) applied to the
+agent's ActionSelector rather than loaded into the network. It exists so that
+RolloutEngine.sync_weights stays a single payload and a single method: the
+learner owns the exploration schedule, and the current value has to reach every
+worker's selector each iteration alongside the weights.
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class EpisodeResult:

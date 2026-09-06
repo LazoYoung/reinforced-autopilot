@@ -213,7 +213,19 @@ def apply_overrides(data: dict[str, Any], overrides: Sequence[str]) -> dict[str,
             node = node.setdefault(p, {})
             if not isinstance(node, dict):
                 raise ValueError(f"override path {dotted!r} traverses a non-mapping value")
-        node[parts[-1]] = yaml.safe_load(raw)
+        parsed = yaml.safe_load(raw)
+        if isinstance(parsed, str):
+            # PyYAML implements YAML 1.1, whose float grammar requires a decimal
+            # point before the exponent -- so "1e-3" parses as the string "1e-3",
+            # not the float 0.001. That spelling is exactly how anyone types a
+            # learning-rate override (the DQN default is 5e-4), so without this
+            # fallback the value reaches __post_init__ as a str and fails an
+            # unrelated numeric comparison instead of being accepted normally.
+            try:
+                parsed = float(parsed)
+            except (TypeError, ValueError):
+                pass
+        node[parts[-1]] = parsed
     return out
 
 

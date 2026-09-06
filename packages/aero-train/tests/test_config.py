@@ -108,6 +108,30 @@ def test_malformed_override_raises():
         apply_overrides(MINIMAL, ["rollout.n_workers"])
 
 
+@pytest.mark.parametrize("spelling", ["1e-3", "5e-4", "1E-3", "1e3", "-1e-3"])
+def test_overrides_coerce_bare_exponent_notation_to_float(spelling):
+    # PyYAML is YAML 1.1, whose float grammar requires a decimal point before
+    # the exponent, so yaml.safe_load(spelling) alone returns a str here. This
+    # is exactly the spelling anyone types for a learning-rate sweep --
+    # DQNConfig.lr defaults to 5e-4 -- so apply_overrides must coerce it itself.
+    data = apply_overrides(MINIMAL, [f"algo.lr={spelling}"])
+    assert isinstance(data["algo"]["lr"], float)
+    assert data["algo"]["lr"] == pytest.approx(float(spelling))
+
+
+@pytest.mark.parametrize("spelling", ["1.0e-3", "0.001"])
+def test_overrides_still_accept_yaml_native_float_spellings(spelling):
+    # These already parse as float under YAML 1.1; guard against a fix that
+    # only special-cases the exponent gap and breaks the spellings that worked.
+    data = apply_overrides(MINIMAL, [f"algo.lr={spelling}"])
+    assert data["algo"]["lr"] == pytest.approx(0.001)
+
+
+def test_overrides_leave_non_numeric_strings_as_strings():
+    data = apply_overrides(MINIMAL, ["run_name=wings-level"])
+    assert data["run_name"] == "wings-level"
+
+
 def test_yaml_round_trip(tmp_path):
     path = tmp_path / "run.yaml"
     path.write_text(

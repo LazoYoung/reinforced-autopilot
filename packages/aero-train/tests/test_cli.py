@@ -52,6 +52,17 @@ def test_override_is_applied(config_path, tmp_path):
     assert load_checkpoint(tmp_path / "ckpt" / "latest.pt")["config"]["run_name"] == "overridden"
 
 
+def test_override_accepts_bare_exponent_learning_rate(config_path, tmp_path):
+    # The most natural spelling for a learning-rate sweep -- `algo.lr=1e-3` --
+    # used to reach DQNConfig as the str "1e-3" (PyYAML's YAML-1.1 float
+    # grammar requires a decimal point before the exponent), raising a bare
+    # "'<=' not supported between instances of 'str' and 'int'" from
+    # __post_init__ instead of building a working config.
+    cli.main(["run", str(config_path), "--override", "algo.lr=1e-3"])
+    cfg = load_checkpoint(tmp_path / "ckpt" / "latest.pt")["config"]
+    assert cfg["algo"]["lr"] == pytest.approx(0.001)
+
+
 def test_override_cannot_bypass_validation(config_path):
     with pytest.raises(ValueError, match="frames_per_iter"):
         cli.main(["run", str(config_path), "--override", "rollout.frames_per_iter=17"])

@@ -17,7 +17,7 @@ from __future__ import annotations
 import gymnasium as gym
 import numpy as np
 
-from .primitives import Agent, EpisodeResult, Segment
+from .primitives import Agent, EpisodeResult, Segment, Transitions
 
 
 class ExperienceSource:
@@ -72,8 +72,89 @@ class ExperienceSource:
         )
 
     def _record_episodes(self, reward, term, trunc, live, episodes) -> None:
-        """Completed in the episode-boundary task."""
-        self._autoreset = np.zeros(self.num_envs, bool)
+        """Accumulate per-env returns and arm the autoreset skip.
+
+        Gymnasium 1.x autoresets on the step *after* the one that ended the
+        episode: that next step ignores the action and returns the reset
+        observation. Arming `_autoreset` here is what makes the following
+        collect() row invalid, so a fabricated (final state, ignored action,
+        reset state) tuple never reaches the buffer.
+        """
+        self._ep_return[live] += reward[live]
+        self._ep_len[live] += 1
+        done = (term | trunc) & live
+        for index in np.flatnonzero(done):
+            episodes.append(
+                EpisodeResult(
+                    ret=float(self._ep_return[index]),
+                    length=int(self._ep_len[index]),
+                    terminated=bool(term[index]),
+                )
+            )
+            self._ep_return[index] = 0.0
+            self._ep_len[index] = 0
+        self._autoreset = done
 
     def close(self) -> None:
         self.env.close()
+
+
+def to_transitions(segment: Segment, gamma: float, n_step: int = 1) -> Transitions:
+    """Flatten a segment into n-step transitions, dropping the autoreset rows.
+
+    This is the single place in the codebase where a segment becomes flat
+    transitions. Off-policy algorithms call it on insert into the replay buffer;
+    on-policy algorithms consume segments as they are.
+
+    Accumulation for a row stops at whichever comes first: n steps, a terminal
+    state, a time limit, the end of the segment, or an autoreset row. `steps`
+    records how many were actually accumulated, so the caller bootstraps with
+    gamma ** steps rather than a fixed gamma ** n.
+
+    A time limit sets `terminated=False` and leaves `next_obs` at the true final
+    observation, so the value function bootstraps straight through it. Under
+    Gymnasium's next-step autoreset that observation is already sitting at
+    obs[t + 1]; nothing has to be stashed.
+
+    A Python loop over T x B is fine at this scale (128 x 8 rows per iteration
+    against a flight model that costs milliseconds per step); vectorize only if
+    a profile says to.
+    """
+    if n_step < 1:
+        raise ValueError(f"n_step must be >= 1, got {n_step}")
+
+    obs, actions, returns, next_obs, terminated, steps = [], [], [], [], [], []
+    for b in range(segment.B):
+        for t in range(segment.T):
+            if not segment.valid[t, b]:
+                continue
+            total = 0.0
+            taken = 0
+            hit_terminal = False
+            last = t
+            j = t
+            while taken < n_step and j < segment.T and segment.valid[j, b]:
+                total += (gamma**taken) * float(segment.rewards[j, b])
+                taken += 1
+                last = j
+                if segment.terminated[j, b]:
+                    hit_terminal = True
+                    break
+                if segment.truncated[j, b]:
+                    break
+                j += 1
+            obs.append(segment.obs[t, b])
+            actions.append(segment.actions[t, b])
+            returns.append(total)
+            next_obs.append(segment.obs[last + 1, b])
+            terminated.append(hit_terminal)
+            steps.append(taken)
+
+    return Transitions(
+        obs=np.asarray(obs, np.float32),
+        actions=np.asarray(actions, segment.actions.dtype),
+        returns=np.asarray(returns, np.float32),
+        next_obs=np.asarray(next_obs, np.float32),
+        terminated=np.asarray(terminated, bool),
+        steps=np.asarray(steps, np.int32),
+    )

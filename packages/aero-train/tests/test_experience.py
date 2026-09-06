@@ -138,3 +138,68 @@ def test_collect_rejects_a_non_positive_length():
     with pytest.raises(ValueError, match="n_steps"):
         src.collect(0)
     src.close()
+
+
+def test_terminating_step_is_recorded_and_the_autoreset_step_is_not():
+    src = make_source(n_envs=1, episode_len=4)
+    seg, _ = src.collect(10)
+    assert seg.valid[:, 0].tolist() == [True] * 4 + [False] + [True] * 4 + [False]
+    assert seg.terminated[:, 0].tolist() == [
+        False, False, False, True, False, False, False, False, True, False,
+    ]
+    src.close()
+
+
+def test_bootstrap_obs_of_a_terminating_step_is_the_true_final_obs():
+    src = make_source(n_envs=1, episode_len=4)
+    seg, _ = src.collect(10)
+    # obs[3] -> obs[4] is the terminating transition; obs[4] must be the final
+    # state (4.0), not the reset state (0.0)
+    assert seg.obs[3, 0, 0] == 3.0
+    assert seg.obs[4, 0, 0] == 4.0
+    assert seg.obs[5, 0, 0] == 0.0
+    src.close()
+
+
+def test_autoreset_step_contributes_no_reward():
+    src = make_source(n_envs=1, episode_len=4)
+    seg, _ = src.collect(6)
+    assert seg.rewards[:, 0].tolist() == [1.0, 1.0, 1.0, 1.0, 0.0, 1.0]
+    src.close()
+
+
+def test_episode_results_are_emitted_on_termination():
+    src = make_source(n_envs=1, episode_len=4)
+    _, episodes = src.collect(10)
+    assert len(episodes) == 2
+    assert all(e.ret == 4.0 and e.length == 4 and e.terminated for e in episodes)
+    src.close()
+
+
+def test_truncation_is_reported_as_not_terminated():
+    src = make_source(n_envs=1, episode_len=4, truncate=True)
+    seg, episodes = src.collect(6)
+    assert seg.truncated[3, 0] and not seg.terminated[3, 0]
+    assert len(episodes) == 1 and episodes[0].terminated is False
+    src.close()
+
+
+def test_envs_ending_at_different_steps_are_masked_independently():
+    env = gym.vector.SyncVectorEnv([counting_env_fn(3), counting_env_fn(5)])
+    src = ExperienceSource(env, ConstantAgent(), seed=0)
+    seg, episodes = src.collect(7)
+    assert seg.valid[:, 0].tolist() == [True, True, True, False, True, True, True]
+    assert seg.valid[:, 1].tolist() == [True, True, True, True, True, False, True]
+    assert [(e.length, e.terminated) for e in episodes] == [(3, True), (5, True), (3, True)]
+    src.close()
+
+
+def test_a_pending_autoreset_carries_across_a_collect_boundary():
+    src = make_source(n_envs=1, episode_len=4)
+    first, first_eps = src.collect(4)
+    second, second_eps = src.collect(2)
+    assert first.terminated[3, 0] and len(first_eps) == 1
+    # the fabricated step is the first row of the NEXT segment
+    assert second.valid[:, 0].tolist() == [False, True]
+    assert second_eps == []
+    src.close()

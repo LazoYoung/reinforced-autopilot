@@ -30,15 +30,20 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     obs_space, act_space = _spaces(env_fn)
     algo = build_algorithm(cfg, obs_space, act_space)
     frames = 0
+    best_return = float("-inf")
     if resume_from is not None:
         algo.load_state_dict(resume_from["algo"])
         frames = int(resume_from["frames"])
+        # .get(...), not [...]: a checkpoint written before this field existed
+        # should still resume, just back at -inf like today's behavior, rather
+        # than KeyError on an old file
+        best_return = float(resume_from.get("best_return", float("-inf")))
         if resume_from.get("buffer") is not None and hasattr(algo, "buffer"):
             algo.buffer.load_state_dict(resume_from["buffer"])
 
     engine = build_engine(cfg.rollout, env_fn, algo.make_agent(), cfg.seed)
     tracker = build_tracker(cfg)
-    checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint)
+    checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint, best_return=best_return)
     trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=env_fn)
     trainer.frames = frames
     trainer.run()

@@ -46,11 +46,22 @@ def load_checkpoint(path: Path) -> dict[str, Any]:
 class CheckpointManager:
     """Keeps two checkpoints: the latest, and the best by evaluation return."""
 
-    def __init__(self, directory: Path | str, cfg: CheckpointConfig) -> None:
+    def __init__(
+        self,
+        directory: Path | str,
+        cfg: CheckpointConfig,
+        *,
+        best_return: float = float("-inf"),
+    ) -> None:
         self.dir = Path(directory)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.cfg = cfg
-        self.best_return = float("-inf")
+        # Callers resuming a run pass the prior run's best_return (read back out
+        # of the checkpoint payload) here. Left at the default, a fresh manager
+        # pointed at a directory that already has a best.pt from an earlier run
+        # would otherwise treat -inf as the bar to beat and clobber it with the
+        # first eval, however much worse than the checkpoint it replaces.
+        self.best_return = float(best_return)
 
     @property
     def latest_path(self) -> Path:
@@ -70,12 +81,22 @@ class CheckpointManager:
         buffer: ReplayBuffer | None = None,
         eval_return: float | None = None,
     ) -> list[Path]:
+        # Decided before building the payload so best_return in the payload is
+        # always this save's up-to-date value, and the improvement check below
+        # (which needs the *prior* value) doesn't compare it against itself.
+        improved = eval_return is not None and eval_return > self.best_return
+        if improved:
+            self.best_return = float(eval_return)
         payload = {
             "config": config_to_dict(config),
             "algo": algo.state_dict(),
             "global_step": algo.global_step,
             "frames": int(frames),
             "rng": rng_state,
+            # persisted so a resumed CheckpointManager can be seeded with it --
+            # otherwise resume starts back at -inf and the first eval after
+            # resuming unconditionally overwrites best.pt
+            "best_return": self.best_return,
             # a 1e5-frame buffer is large and most resumes do not need bit-exact
             # buffer contents, so it is opt-in
             "buffer": buffer.state_dict()
@@ -84,8 +105,7 @@ class CheckpointManager:
         }
         written = [self.latest_path]
         save_checkpoint(self.latest_path, payload)
-        if eval_return is not None and eval_return > self.best_return:
-            self.best_return = float(eval_return)
+        if improved:
             save_checkpoint(self.best_path, payload)
             written.append(self.best_path)
         return written

@@ -93,6 +93,30 @@ def test_best_is_written_only_when_the_return_improves(tmp_path):
     assert mgr.best_return == 20.0
 
 
+def test_best_return_is_persisted_in_the_payload(tmp_path):
+    mgr = CheckpointManager(tmp_path, CheckpointConfig())
+    algo, cfg = make_algo(), make_cfg()
+    mgr.save(config=cfg, algo=algo, frames=1, rng_state=rng_state(), eval_return=42.0)
+    assert load_checkpoint(mgr.latest_path)["best_return"] == 42.0
+
+
+def test_a_manager_seeded_with_a_prior_best_return_does_not_overwrite_a_better_best(tmp_path):
+    # Simulates cmd_resume: a fresh CheckpointManager pointed at a directory
+    # whose best.pt already reflects a return of 50.0. Without seeding
+    # best_return from the checkpoint, this constructor defaults to -inf and
+    # the very next eval -- however bad -- would beat it and overwrite best.pt.
+    mgr = CheckpointManager(tmp_path, CheckpointConfig(), best_return=50.0)
+    algo, cfg = make_algo(), make_cfg()
+    written = mgr.save(config=cfg, algo=algo, frames=1, rng_state=rng_state(), eval_return=10.0)
+    assert mgr.best_path not in written
+    assert mgr.best_return == 50.0
+
+    # a genuine improvement still updates it
+    written = mgr.save(config=cfg, algo=algo, frames=2, rng_state=rng_state(), eval_return=75.0)
+    assert mgr.best_path in written
+    assert mgr.best_return == 75.0
+
+
 def test_only_two_checkpoints_are_ever_retained(tmp_path):
     mgr = CheckpointManager(tmp_path, CheckpointConfig())
     algo, cfg = make_algo(), make_cfg()

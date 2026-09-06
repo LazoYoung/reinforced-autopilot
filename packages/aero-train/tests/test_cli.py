@@ -5,7 +5,7 @@ import textwrap
 import pytest
 
 from aero_train import cli
-from aero_train.checkpoint import load_checkpoint
+from aero_train.checkpoint import load_checkpoint, save_checkpoint
 
 CONFIG = """
 run_name: cli-run
@@ -72,6 +72,25 @@ def test_resume_extends_the_frame_budget(config_path, tmp_path):
     payload = load_checkpoint(ckpt)
     assert payload["config"]["total_steps"] == 128
     assert payload["frames"] >= 128
+
+
+def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
+    # This config's eval_interval_iters (100) never fires within 4 iterations,
+    # so plant a best_return as if an earlier eval already had -- exactly what
+    # a real `autopilot run` that found a good policy leaves behind.
+    cli.main(["run", str(config_path)])
+    ckpt = tmp_path / "ckpt" / "latest.pt"
+    payload = load_checkpoint(ckpt)
+    payload["best_return"] = 500.0
+    save_checkpoint(ckpt, payload)
+
+    cli.main(["resume", str(ckpt), "--total-steps", "128"])
+    # cmd_resume's CheckpointManager must be seeded from the checkpoint's own
+    # best_return. If it instead defaults to -inf, this resumed run's own
+    # saves (which never eval, so never improve on a true best) still carry
+    # "best_return": -inf in every payload, silently erasing the 500.0 a real
+    # best.pt would have represented.
+    assert load_checkpoint(ckpt)["best_return"] == 500.0
 
 
 def test_eval_reports_a_mean_return(config_path, tmp_path, capsys):

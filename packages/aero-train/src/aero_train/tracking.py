@@ -64,9 +64,11 @@ class MLflowTracker(Tracker):
         # mlflow>=3 refuses the filesystem backend ("maintenance mode") unless
         # explicitly opted into, but the local `./mlruns` file store is this
         # project's documented default backing store -- see the module and
-        # class docstrings on the migration story. Opting in here, not
-        # globally via the environment, keeps the decision scoped to trackers
-        # we actually create.
+        # class docstrings on the migration story. These are process-wide
+        # environment defaults, set lazily on first tracker construction
+        # rather than at import time; `setdefault` is deliberate so an
+        # explicit environment setting (e.g. a real MLFLOW_ALLOW_FILE_STORE
+        # policy on a shared host) always wins over this default.
         #
         # mlflow also logs a one-time "agent hint" on import/run-creation when
         # it detects it is being driven by a coding agent. It is emitted via
@@ -88,7 +90,7 @@ class MLflowTracker(Tracker):
             # is no longer a `./mlruns` file store in the installed version --
             # it is a `sqlite:///mlflow.db` file in the cwd, which is not
             # gitignored (only `mlruns/` is) and would land an untracked
-            # binary in the repo root the first time this runs uncofigured.
+            # binary in the repo root the first time this runs unconfigured.
             mlflow.set_tracking_uri("file:./mlruns")
         mlflow.set_experiment(cfg.tracking.experiment)
         self._run = mlflow.start_run(run_name=cfg.run_name)
@@ -101,6 +103,9 @@ class MLflowTracker(Tracker):
         self._mlflow.log_params({**flatten_config(cfg), **library_versions()})
 
     def log_metrics(self, metrics: dict[str, float], step: int) -> None:
+        # Guard against an empty dict: a caller that logs whatever metrics an
+        # iteration happened to produce (e.g. none, before warmup) shouldn't
+        # have to check for that itself before calling in.
         if metrics:
             self._mlflow.log_metrics(metrics, step=step)
 

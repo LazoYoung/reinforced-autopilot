@@ -13,7 +13,14 @@ dependencies = [
     # wheel, whose metadata would otherwise read a bare `Requires-Dist: aero-gym`
     "aero-gym>=0.1.0",
     "gymnasium>=1.3.0",
-    "mlflow>=3.0.0",
+    # -skinny, not full mlflow: tracking.py uses exactly seven client calls
+    # (set_tracking_uri, set_experiment, start_run, log_params, log_metrics,
+    # log_artifact, end_run), all of which -skinny carries along with the
+    # local file store. Full mlflow pulls in a tracking *server* and a
+    # modelling stack (flask, pandas, scikit-learn, docker, ...) that this
+    # project never touches -- and in Phase 3 every Ray worker image would
+    # inherit that tree.
+    "mlflow-skinny>=3.0.0",
     "numpy>=2.5.2",
     "pyyaml>=6.0",
     "torch>=2.6.0",

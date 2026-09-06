@@ -14,8 +14,7 @@ wheels/
 
 # Claude
 .claude/
-docs/superpowers/
-docs/adr/
+docs/
 CLAUDE.md
 
 # Training run artifacts

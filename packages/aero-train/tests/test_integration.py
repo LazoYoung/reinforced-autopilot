@@ -5,6 +5,7 @@ import pytest
 import torch
 from tests.conftest import CountingEnv, RecordingTracker
 
+from aero_train.algo import build_algorithm
 from aero_train.algo.dqn import DQN
 from aero_train.checkpoint import CheckpointManager, load_checkpoint
 from aero_train.config import (
@@ -14,6 +15,7 @@ from aero_train.config import (
     RolloutConfig,
     TrackingConfig,
     TrainConfig,
+    config_from_dict,
 )
 from aero_train.envs import make_env_fn
 from aero_train.rollout import LocalRolloutEngine
@@ -39,7 +41,7 @@ def segment_batch(seed=0, T=10, B=2):
     )
 
 
-def test_a_restored_learner_produces_bit_identical_updates(tmp_path):
+def test_a_restored_learner_produces_bit_identical_updates():
     """Resume is exact for the learner. This asserts exactly that claim."""
     original = DQN(obs_shape=(1,), n_actions=2, cfg=SMALL, seed=0)
     original.observe(segment_batch(seed=1))
@@ -104,9 +106,10 @@ def test_dqn_solves_cartpole(tmp_path):
     `autopilot run` followed by `autopilot eval <best checkpoint>`. Asserting
     on the final learner would test "vanilla DQN converges stably on CartPole
     on a single seed," which is false and not this test's claim. The claim is
-    that the best checkpoint the run produces, reloaded the way `autopilot
-    eval` reloads it, clears the bar -- so this test exercises save -> load ->
-    eval, not just train -> eval.
+    that the best checkpoint the run produces, reloaded through the exact same
+    `config_from_dict` + `build_algorithm` path `cmd_eval` uses (cli.py), clears
+    the bar -- so this test exercises save -> load -> eval, not just train ->
+    eval.
 
     Deselected by default (`-m 'not slow'`). Run it with:
         uv run pytest -m slow packages/aero-train/tests/test_integration.py
@@ -138,7 +141,10 @@ def test_dqn_solves_cartpole(tmp_path):
 
     engine = LocalRolloutEngine(env_fn, algo.make_agent(), cfg.rollout.envs_per_worker, cfg.seed)
     tracker = RecordingTracker()
-    checkpoints = CheckpointManager(tmp_path, cfg.checkpoint)
+    # cfg.checkpoint.dir, not a second tmp_path: the directory is stated once,
+    # here, and CheckpointManager reads it back out of the same cfg it was
+    # given -- exactly how cmd_run wires it in cli.py
+    checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint)
     Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=env_fn).run()
 
     assert checkpoints.best_path.exists(), (
@@ -146,15 +152,23 @@ def test_dqn_solves_cartpole(tmp_path):
         f"the run (total_steps={cfg.total_steps}, frames_per_iter={cfg.rollout.frames_per_iter})"
     )
     payload = load_checkpoint(checkpoints.best_path)
-    best = DQN(
-        obs_shape=algo.obs_shape, n_actions=algo.n_actions,
-        cfg=algo_cfg, device=cfg.device, seed=cfg.seed,
-    )
+    # same reload path cmd_eval uses (cli.py): the config travels with the
+    # checkpoint and is rebuilt through config_from_dict, then build_algorithm
+    # constructs the algorithm from it -- not the algo_cfg/obs_shape/n_actions
+    # already sitting in this test's locals, so this genuinely exercises the
+    # eval workflow rather than assuming it matches
+    eval_cfg = config_from_dict(payload["config"])
+    eval_probe = env_fn()
+    try:
+        obs_space, act_space = eval_probe.observation_space, eval_probe.action_space
+    finally:
+        eval_probe.close()
+    best = build_algorithm(eval_cfg, obs_space, act_space)
     best.load_state_dict(payload["algo"])
 
-    # 20 episodes, independent of the 5-episode eval that selected this
-    # checkpoint -- selection was made on a noisy small sample, so this is
-    # what actually makes the reported number trustworthy
+    # the 20-episode re-eval (240ish) clears the 195 threshold by a 45-point
+    # margin; that margin, not the sample size, is what makes this robust --
+    # eval seeds only move the number by about +-2 (see the report)
     final = evaluate_policy(best, env_fn, episodes=20, seed=1234)
     assert final >= 195.0, (
         f"DQN's best checkpoint reached only {final:.1f} on CartPole-v1 after "

@@ -435,9 +435,16 @@ def test_get_reads_one_value_per_reply_when_flightgear_batches_them():
     def serve():
         conn, _ = server.accept()
         with conn:
-            conn.recv(1024)  # the "data" handshake
-            time.sleep(0.05)
-            conn.recv(1024)  # both gets, pipelined by the client
+            # The client's "data" handshake and its first "get" can coalesce into
+            # one TCP segment, so read until both newline-terminated commands have
+            # actually arrived rather than assuming a fixed number of recv calls
+            # (the second get isn't sent until this one's reply comes back).
+            buf = b""
+            while buf.count(b"\n") < 2:
+                chunk = conn.recv(1024)
+                if not chunk:
+                    return  # connection closed before the handshake completed
+                buf += chunk
             conn.sendall(b"25.4\n25.9\n")
         server.close()
 

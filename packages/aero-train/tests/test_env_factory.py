@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import gymnasium as gym
-import numpy as np
 import pytest
 
 from aero_train.envs import make_env_fn

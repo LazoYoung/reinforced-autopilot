@@ -1,0 +1,40 @@
+# The vertical slice's proof: DQN learning CartPole end to end.
+run_name: dqn-cartpole
+seed: 0
+total_steps: 60000        # frames, not gradient updates
+device: cpu
+
+env:
+  id: CartPole-v1
+
+algo:
+  type: dqn
+  hidden_sizes: [128, 128]
+  lr: 0.0005
+  gamma: 0.99
+  n_step: 1
+  buffer_size: 50000
+  warmup_frames: 1000
+  batch_size: 64
+  target_sync_interval: 500
+  updates_per_iter: 4
+  epsilon_start: 1.0
+  epsilon_final: 0.02
+  epsilon_decay_frames: 20000
+
+rollout:
+  engine: local
+  n_workers: 1
+  envs_per_worker: 8
+  frames_per_iter: 128
+
+tracking:
+  enabled: true
+  experiment: reinforced-autopilot
+
+checkpoint:
+  dir: runs/dqn-cartpole/checkpoints
+  interval_iters: 50
+  eval_interval_iters: 50
+  eval_episodes: 5
+  include_buffer: false

@@ -164,3 +164,36 @@ class Agent(ABC):
         are applied to the selector rather than the network. This convention is
         what keeps RolloutEngine.sync_weights to a single payload.
         """
+
+
+class ArgmaxSelector(ActionSelector):
+    """Greedy. Used for evaluation and as the deterministic baseline."""
+
+    def __call__(self, scores: np.ndarray) -> np.ndarray:
+        return np.asarray(scores).argmax(axis=-1)
+
+
+class EpsilonGreedySelector(ActionSelector):
+    """Greedy with probability 1 - epsilon, uniform random otherwise.
+
+    `epsilon` is a plain mutable attribute rather than a constructor-fixed value
+    because the learner owns the schedule and pushes the current value to each
+    worker every iteration, under the `selector.epsilon` key of the
+    actor_state_dict.
+    """
+
+    def __init__(
+        self, epsilon: float = 1.0, rng: np.random.Generator | None = None
+    ) -> None:
+        self.epsilon = float(epsilon)
+        self.rng = rng if rng is not None else np.random.default_rng()
+
+    def __call__(self, scores: np.ndarray) -> np.ndarray:
+        scores = np.asarray(scores)
+        batch, n_actions = scores.shape
+        actions = scores.argmax(axis=-1)
+        explore = self.rng.random(batch) < self.epsilon
+        n_explore = int(explore.sum())
+        if n_explore:
+            actions[explore] = self.rng.integers(0, n_actions, size=n_explore)
+        return actions

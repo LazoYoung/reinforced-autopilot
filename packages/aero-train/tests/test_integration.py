@@ -169,8 +169,8 @@ def test_dqn_solves_cartpole(tmp_path):
     # the 20-episode re-eval (240ish) clears the 195 threshold by a 45-point
     # margin; that margin, not the sample size, is what makes this robust --
     # eval seeds only move the number by about +-2 (see the report)
-    final = evaluate_policy(best, env_fn, episodes=20, seed=1234)
-    assert final >= 195.0, (
-        f"DQN's best checkpoint reached only {final:.1f} on CartPole-v1 after "
+    report = evaluate_policy(best, env_fn, episodes=20, seed=1234)
+    assert report.mean_return >= 195.0, (
+        f"DQN's best checkpoint reached only {report.mean_return:.1f} on CartPole-v1 after "
         f"{cfg.total_steps} frames; the learning stack is not working end to end"
     )

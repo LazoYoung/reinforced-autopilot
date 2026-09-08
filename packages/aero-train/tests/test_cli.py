@@ -110,7 +110,13 @@ def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
 def test_eval_reports_a_mean_return(config_path, tmp_path, capsys):
     cli.main(["run", str(config_path)])
     assert cli.main(["eval", str(tmp_path / "ckpt" / "latest.pt"), "--episodes", "2"]) == 0
-    assert "mean return" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    # "mean return" alone doesn't prove the length/terminated portions of the
+    # f-string survived -- a dropped or garbled tail would still contain that
+    # substring and pass unnoticed. Check for length and terminated too.
+    assert "mean return" in out
+    assert "length" in out
+    assert "terminated" in out
 
 
 def test_flightgear_is_only_offered_on_eval(config_path):

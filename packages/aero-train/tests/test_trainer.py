@@ -370,23 +370,13 @@ def test_a_truncated_episode_is_not_counted_as_terminated():
     assert report.mean_length == pytest.approx(4.0)
 
 
-def test_the_trainer_logs_all_three_eval_metrics(tmp_path):
-    cfg = make_cfg(eval_interval_iters=1, eval_episodes=2)
-    trainer, _, tracker, _ = make_trainer(
-        tmp_path, cfg, episode_len=1000, eval_env_fn=env_fn(episode_len=5)
-    )
-    trainer.run()
-    assert tracker.metric_series("eval/return_mean") == pytest.approx([5.0] * 4)
-    assert tracker.metric_series("eval/length_mean") == pytest.approx([5.0] * 4)
-    assert tracker.metric_series("eval/terminated_frac") == pytest.approx([1.0] * 4)
-
-
 class _DoubleRewardEnv(gym.Env):
-    """CountingEnv pays 1.0/step, so mean_return == mean_length in every test
-    above -- a build that swaps the two EvalReport fields would pass all of
-    them unnoticed. This env pays 2.0/step over a fixed length instead, so
-    return and length land on different numbers and a field swap is visible.
-    Not in conftest.py: no other test needs a non-unit reward.
+    """CountingEnv pays 1.0/step, so mean_return == mean_length whenever it is
+    the eval env -- a build that swaps the two EvalReport fields (or swaps
+    which field a value is logged under) would pass unnoticed. This env pays
+    2.0/step over a fixed length instead, so return and length land on
+    different numbers and a swap is visible. Not in conftest.py: no other
+    test needs a non-unit reward.
     """
 
     metadata = {"render_modes": []}
@@ -406,6 +396,21 @@ class _DoubleRewardEnv(gym.Env):
         self.t += 1
         done = self.t >= self.episode_len
         return np.array([float(self.t)], np.float32), 2.0, done, False, {}
+
+
+def test_the_trainer_logs_all_three_eval_metrics(tmp_path):
+    # _DoubleRewardEnv (not CountingEnv): CountingEnv's constant 1.0/step
+    # reward makes eval/return_mean == eval/length_mean by coincidence, so a
+    # build that logs each under the other's key would pass this test anyway.
+    # Distinct 6.0 vs 3.0 values catch that.
+    cfg = make_cfg(eval_interval_iters=1, eval_episodes=2)
+    trainer, _, tracker, _ = make_trainer(
+        tmp_path, cfg, episode_len=1000, eval_env_fn=_DoubleRewardEnv
+    )
+    trainer.run()
+    assert tracker.metric_series("eval/return_mean") == pytest.approx([6.0] * 4)
+    assert tracker.metric_series("eval/length_mean") == pytest.approx([3.0] * 4)
+    assert tracker.metric_series("eval/terminated_frac") == pytest.approx([1.0] * 4)
 
 
 def test_mean_return_and_mean_length_land_on_the_right_fields():

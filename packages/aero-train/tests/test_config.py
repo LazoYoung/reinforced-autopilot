@@ -175,12 +175,15 @@ def test_env_needs_exactly_one_of_id_and_scenario():
 def test_scenario_only_settings_are_rejected_on_the_gymnasium_branch():
     from aero_train.config import EnvConfig
 
-    for kwargs in (
-        {"render_mode": "flightgear"},
-        {"scenario_kwargs": {"aircraft": "737"}},
-        {"delta": 0.2},
+    # match=rf"env\.{name}" rather than the shared "aero_gym scenario" suffix
+    # every branch of this rejection shares -- otherwise a message that names
+    # the wrong offending field would still satisfy the assertion.
+    for name, kwargs in (
+        ("render_mode", {"render_mode": "flightgear"}),
+        ("scenario_kwargs", {"scenario_kwargs": {"aircraft": "737"}}),
+        ("delta", {"delta": 0.2}),
     ):
-        with pytest.raises(ValueError, match="aero_gym scenario"):
+        with pytest.raises(ValueError, match=rf"env\.{name}"):
             EnvConfig(id="CartPole-v1", **kwargs)
 
 
@@ -203,12 +206,21 @@ def test_render_mode_and_delta_are_validated():
 def test_a_scenario_env_round_trips_through_a_config_dict():
     from aero_train.config import config_from_dict, config_to_dict
 
+    # render_mode and delta are given non-default values on purpose: a round
+    # trip that silently dropped either back to its default would still pass
+    # an equality check seeded with the defaults, the same blind spot
+    # test_yaml_round_trip exists to close for the rest of TrainConfig.
     cfg = config_from_dict(
         {
             "run_name": "flight",
-            "env": {"scenario": "steady_flight", "scenario_kwargs": {"aircraft": "737"}},
+            "env": {
+                "scenario": "steady_flight",
+                "scenario_kwargs": {"aircraft": "737"},
+                "render_mode": "flightgear",
+                "delta": 0.05,
+            },
             "algo": {"type": "dqn"},
         }
     )
     assert cfg.env.scenario == "steady_flight"
-    assert config_to_dict(cfg)["env"]["scenario_kwargs"] == {"aircraft": "737"}
+    assert config_from_dict(config_to_dict(cfg)) == cfg

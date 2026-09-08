@@ -81,3 +81,42 @@ def test_the_scenario_branch_wraps_the_env_in_both_wrappers():
         assert obs.min() >= -1.0 and obs.max() <= 1.0
     finally:
         env.close()
+
+
+def test_the_scenario_branch_applies_max_episode_steps():
+    # Mirrors test_make_env_fn_applies_max_episode_steps on the Gymnasium
+    # branch. cfg.max_episode_steps must reach the *scenario* (there is no
+    # gym.make(..., max_episode_steps=...) TimeLimit wrapper on this branch)
+    # -- nothing else in the wrapper stack would ever truncate.
+    pytest.importorskip("jsbsim")
+    env = make_env_fn(_EnvCfg(scenario="steady_flight", max_episode_steps=5))()
+    try:
+        env.reset(seed=0)
+        for _ in range(5):
+            _, _, terminated, truncated, _ = env.step(env.null_action)
+        assert truncated and not terminated
+    finally:
+        env.close()
+
+
+def test_the_scenario_branch_plumbs_delta_through_to_the_wrapper():
+    # Discrete(81) is a function of axis count alone, so it cannot tell
+    # whether cfg.delta ever reached DeltaAction -- check the attribute
+    # directly.
+    pytest.importorskip("jsbsim")
+    env = make_env_fn(_EnvCfg(scenario="steady_flight", delta=0.5))()
+    try:
+        assert env.delta == 0.5
+    finally:
+        env.close()
+
+
+def test_the_scenario_branch_plumbs_render_mode_through():
+    # AeroGymEnv only stores render_mode in __init__ -- it is not acted on
+    # until reset() -- so this is checkable without ever launching FlightGear.
+    pytest.importorskip("jsbsim")
+    env = make_env_fn(_EnvCfg(scenario="steady_flight", render_mode="flightgear"))()
+    try:
+        assert env.render_mode == "flightgear"
+    finally:
+        env.close()

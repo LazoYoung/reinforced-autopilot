@@ -84,8 +84,13 @@ def cmd_eval(args: argparse.Namespace) -> int:
     obs_space, act_space = _spaces(env_fn)
     algo = build_algorithm(cfg, obs_space, act_space)
     algo.load_state_dict(payload["algo"])
-    mean_return = evaluate_policy(algo, env_fn, args.episodes, seed=cfg.seed)
-    print(f"{args.episodes} episodes, mean return {mean_return:.2f}")
+    report = evaluate_policy(algo, env_fn, args.episodes, seed=cfg.seed)
+    # "mean return" (not just "return") is the substring test_eval_reports_a_mean_return
+    # asserts on -- keep it literally present alongside the new length/termination fields.
+    print(
+        f"{args.episodes} episodes: mean return {report.mean_return:.2f}, "
+        f"length {report.mean_length:.1f}, terminated {report.terminated_frac:.0%}"
+    )
     return 0
 
 

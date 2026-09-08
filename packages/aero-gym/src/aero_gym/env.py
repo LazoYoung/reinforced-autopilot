@@ -10,7 +10,7 @@ import numpy as np
 
 from .scenario import Scenario, Transition
 from .simulator import Simulator
-from .variables import ACTION_SPECS, OBSERVATION_SPECS, FlightVariable
+from .variables import ACTION_SPECS, FlightVariable
 
 
 class AeroGymEnv(gym.Env):
@@ -48,8 +48,8 @@ class AeroGymEnv(gym.Env):
 
         act_low = np.array([ACTION_SPECS[v].low for v in scenario.action_variables], np.float32)
         act_high = np.array([ACTION_SPECS[v].high for v in scenario.action_variables], np.float32)
-        obs_low = np.array([OBSERVATION_SPECS[v].low for v in scenario.observation_variables], np.float32)
-        obs_high = np.array([OBSERVATION_SPECS[v].high for v in scenario.observation_variables], np.float32)
+        obs_low = np.array([f.spec.low for f in scenario.observation_features], np.float32)
+        obs_high = np.array([f.spec.high for f in scenario.observation_features], np.float32)
         self.action_space = gym.spaces.Box(act_low, act_high, dtype=np.float32)
         self.observation_space = gym.spaces.Box(obs_low, obs_high, dtype=np.float32)
 
@@ -100,7 +100,9 @@ class AeroGymEnv(gym.Env):
         return {v: self.simulator.observe(v) for v in self.scenario.observation_variables}
 
     def _to_array(self, obs: dict[FlightVariable, float]) -> np.ndarray:
-        arr = np.array([obs[v] for v in self.scenario.observation_variables], np.float32)
+        arr = np.array(
+            [f.fn(obs) for f in self.scenario.observation_features], np.float32
+        )
         return np.clip(arr, self.observation_space.low, self.observation_space.high)
 
     def _pace_real_time(self) -> None:

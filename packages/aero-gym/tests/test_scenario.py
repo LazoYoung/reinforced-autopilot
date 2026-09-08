@@ -45,3 +45,41 @@ def test_scenario_validation(initial_conditions, kwargs):
             reward_fn=constant_reward,
             **kwargs,
         )
+
+
+def test_features_default_to_a_passthrough_over_the_observed_variables(initial_conditions):
+    from aero_gym.scenario import Scenario
+    from aero_gym.variables import OBSERVATION_SPECS, FlightVariable as V
+
+    scenario = Scenario(
+        name="passthrough",
+        initial_conditions=initial_conditions,
+        reward_fn=lambda t: (0.0, False),
+        observation_variables=(V.ROLL, V.ALTITUDE),
+    )
+    assert [f.name for f in scenario.observation_features] == ["roll", "altitude"]
+    assert scenario.observation_features[1].spec == OBSERVATION_SPECS[V.ALTITUDE]
+    assert scenario.observation_features[0].fn({V.ROLL: 12.0}) == 12.0
+
+
+def test_raw_narrows_bounds_without_touching_the_unit(initial_conditions):
+    from aero_gym.scenario import raw
+    from aero_gym.variables import FlightVariable as V
+
+    feature = raw(V.ALTITUDE, -500.0, 500.0)
+    assert (feature.spec.low, feature.spec.high) == (-500.0, 500.0)
+    assert feature.spec.unit == "ft"
+
+
+def test_duplicate_feature_names_are_rejected(initial_conditions):
+    from aero_gym.scenario import Scenario, raw
+    from aero_gym.variables import FlightVariable as V
+
+    with pytest.raises(ValueError, match="duplicate observation feature"):
+        Scenario(
+            name="dup",
+            initial_conditions=initial_conditions,
+            reward_fn=lambda t: (0.0, False),
+            observation_variables=(V.ROLL,),
+            observation_features=(raw(V.ROLL), raw(V.ROLL)),
+        )

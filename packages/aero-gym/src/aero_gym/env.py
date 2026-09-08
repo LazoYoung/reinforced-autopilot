@@ -10,7 +10,7 @@ import numpy as np
 
 from .scenario import Scenario, Transition
 from .simulator import Simulator
-from .variables import ACTION_SPECS, FlightVariable
+from .variables import ACTION_POSITION, ACTION_SPECS, FlightVariable
 
 
 class AeroGymEnv(gym.Env):
@@ -92,6 +92,24 @@ class AeroGymEnv(gym.Env):
             and self._elapsed_steps >= self.scenario.max_episode_steps
         )
         return self._to_array(obs_dict), float(reward), bool(terminated), truncated, {"obs": obs_dict}
+
+    def initial_action(self) -> np.ndarray:
+        """The action equivalent to the aircraft's control state after reset.
+
+        DeltaAction seeds its accumulator from this. An accumulator starting at
+        zero would chop the throttle to idle on the very first step, undoing the
+        flyable state the aircraft profile exists to establish.
+
+        Meaningful only after reset(), and only because the simulator settles
+        the FCS there -- before that the positions have not been computed.
+        """
+        values = [
+            self.simulator.observe(ACTION_POSITION[var]) if var in ACTION_POSITION else 0.0
+            for var in self.scenario.action_variables
+        ]
+        return np.clip(
+            np.array(values, np.float32), self.action_space.low, self.action_space.high
+        )
 
     def close(self) -> None:
         self.simulator.close()

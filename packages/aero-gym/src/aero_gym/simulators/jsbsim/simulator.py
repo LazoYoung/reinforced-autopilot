@@ -78,6 +78,14 @@ class JSBSimSimulator(Simulator):
         fdm["propulsion/set-running"] = -1
         for prop, value in profile.startup.items():
             fdm[prop] = value
+        # JSBSim recomputes fcs/*-pos-norm only inside run(), so right now every
+        # position property still reads 0 while the commands above say 0.7.
+        # Settling one agent step's worth of physics costs 0.1 s of simulated
+        # time -- a few feet of altitude at cruise -- and buys a first
+        # observation that is true. Measured: after 12 steps the elevator
+        # position reads 0.69987 against a commanded 0.7.
+        for _ in range(max(1, round(1.0 / (self._dt * scenario.agent_hz)))):
+            self.run()
         if self._viewer is not None and not self._viewer_synced:
             # Don't start the episode while FlightGear is still on its splash
             # screen — nothing would be visualized. Warns and proceeds headless

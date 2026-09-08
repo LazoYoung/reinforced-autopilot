@@ -327,3 +327,48 @@ def test_an_unpublished_property_names_the_variable_the_property_and_the_model(
             sim.reset(dataclasses.replace(scenario, observation_variables=(V.AOS,)))
     finally:
         sim.close()
+
+
+def test_the_first_observation_of_an_episode_is_not_stale():
+    """fcs/*-pos-norm only updates inside run(), so without a settling step the
+    throttle reads 0.0 while the profile just commanded 0.7."""
+    from aero_gym.simulators.jsbsim.aircraft import profile_for
+    from aero_gym.variables import FlightVariable as V
+
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        _, info = env.reset(seed=0)
+        commanded = profile_for("c172p").startup["fcs/throttle-cmd-norm"]
+        assert info["obs"][V.THROTTLE_POS] == pytest.approx(commanded, abs=1e-2)
+    finally:
+        env.close()
+
+
+def test_initial_action_describes_the_aircrafts_startup_state():
+    from aero_gym.simulators.jsbsim.aircraft import profile_for
+
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        env.reset(seed=0)
+        action = env.initial_action()
+        throttle_index = scenario.action_variables.index(V.THROTTLE)
+        commanded = profile_for("c172p").startup["fcs/throttle-cmd-norm"]
+        assert action.shape == env.action_space.shape
+        assert action[throttle_index] == pytest.approx(commanded, abs=1e-2)
+        assert env.action_space.contains(action)
+    finally:
+        env.close()
+
+
+def test_elevator_position_follows_the_commanded_sign(env):
+    """Canonical +elevator is pitch-up, and the observed position must agree --
+    asserted as a movement from the trimmed baseline, not against a constant."""
+    env.reset(seed=0)
+    _, _, _, _, info = env.step(np.array([0.0, 0.0, 0.0, 0.7], np.float32))
+    baseline = info["obs"][V.ELEVATOR_POS]
+    env.reset(seed=0)
+    for _ in range(3):
+        _, _, _, _, info = env.step(np.array([0.5, 0.0, 0.0, 0.7], np.float32))
+    assert info["obs"][V.ELEVATOR_POS] > baseline

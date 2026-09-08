@@ -33,13 +33,24 @@ def test_reset_honours_initial_conditions(env):
 
 def test_trimmed_flight_stays_in_the_envelope(env):
     """Not a claim that a fixed action holds the band -- it does not, by design.
-    What must hold is that the observation contract survives real flight."""
+    What must hold is that the observation contract survives real flight: each
+    feature's pre-clip value stays within the bound its Box entry declares.
+
+    Not `env.observation_space.contains(obs_arr)` -- `_to_array` clips to
+    those same bounds before returning (env.py:126-127), so containment holds
+    by construction and could only ever catch a NaN, a shape mismatch, or a
+    dtype problem, never a real excursion outside the declared range.
+    """
     env.reset(seed=0)
     action = np.array([0.05, 0.0, 0.0, 0.7], np.float32)
     for _ in range(60):
-        obs_arr, reward, terminated, truncated, info = env.step(action)
-        assert env.observation_space.contains(obs_arr)
+        _, reward, terminated, truncated, info = env.step(action)
         assert np.isfinite(reward)
+        for feature in env.scenario.observation_features:
+            value = feature.fn(info["obs"])
+            assert feature.spec.low <= value <= feature.spec.high, (
+                f"{feature.name}={value} outside [{feature.spec.low}, {feature.spec.high}]"
+            )
         if terminated:
             break
     assert info["obs"][V.ALTITUDE] > 4000.0
@@ -61,9 +72,13 @@ def test_controls_have_canonical_sign(env):
 
 
 def test_observations_cover_all_variables(env):
-    _, info = env.reset(seed=0)
-    for var, value in info["obs"].items():
-        spec = OBSERVATION_SPECS[var]
+    """All 15 canonical variables, not just the 12 steady_flight narrows to:
+    query the simulator directly rather than iterating `info["obs"]`, which
+    only carries the scenario's observed subset and would silently drop
+    YAW, YAW_RATE and AOS from this check without the test's name noticing."""
+    env.reset(seed=0)
+    for var, spec in OBSERVATION_SPECS.items():
+        value = env.simulator.observe(var)
         assert spec.low <= value <= spec.high, f"{var} out of declared bounds: {value}"
 
 

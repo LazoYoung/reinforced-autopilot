@@ -76,6 +76,7 @@ def make_steady_flight_scenario(
         ObservationFeature(
             "altitude_error_ft",
             VariableSpec("ft", -ALTITUDE_BAND_FT, ALTITUDE_BAND_FT, "altitude minus target"),
+            # actual - target: positive means above target, negative means below.
             lambda obs: obs[V.ALTITUDE] - target_altitude_ft,
         ),
         ObservationFeature(
@@ -83,6 +84,9 @@ def make_steady_flight_scenario(
             VariableSpec(
                 "deg", -HEADING_BAND_DEG, HEADING_BAND_DEG, "signed shortest-path heading error"
             ),
+            # target - current, wrapped the short way: positive means the
+            # target is to the right of current heading (turn right to close
+            # it) -- the opposite convention from altitude_error_ft above.
             lambda obs: heading_error_deg(obs[V.HEADING], target_heading_deg),
         ),
         raw(V.VERTICAL_SPEED, -VERTICAL_SPEED_BAND_FPM, VERTICAL_SPEED_BAND_FPM),

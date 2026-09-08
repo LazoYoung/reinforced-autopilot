@@ -233,7 +233,9 @@ def test_both_engines_answer_the_agent_over_a_flight():
 
 
 def test_every_profile_publishes_its_control_positions():
-    """A missing pos-norm property is an aircraft fact, so it is caught per aircraft."""
+    """A missing pos-norm property is an aircraft fact, so it is caught per
+    aircraft -- and so is the surface's sign, because a left/right pair need not
+    both follow the pilot convention and only the FDM can say which one does."""
     from aero_gym.simulators.jsbsim.aircraft import PROFILES
     from aero_gym.variables import ACTION_POSITION
 
@@ -247,24 +249,81 @@ def test_every_profile_publishes_its_control_positions():
             sim.reset(scenario)
             for var in ACTION_POSITION.values():
                 assert np.isfinite(sim.observe(var)), f"{model}: {var.name}"
+            for action in (V.ELEVATOR, V.AILERON, V.RUDDER):
+                sim.set_control(action, 0.5)
+            for _ in range(20):  # let the actuators travel
+                sim.run()
+            for action in (V.ELEVATOR, V.AILERON, V.RUDDER):
+                position = ACTION_POSITION[action]
+                deflection = sim.observe(position)
+                assert deflection > 0.0, f"{model}: {position.name} = {deflection}"
         finally:
             sim.close()
 
 
-def test_an_unpublished_property_names_the_variable_and_the_profile():
+@pytest.mark.parametrize(
+    "convert, expected_sign",
+    [
+        # Identity: the override hands the right surface's raw reading straight
+        # through, and the 737 publishes that as the negation of its left one.
+        # A negative answer is therefore proof the property name came from the
+        # profile and not from OBSERVATION_MAP.
+        (lambda x: x, -1.0),
+        # The realistic escape hatch: an aircraft that exposes only its right
+        # aileron supplies the negation itself, and the canonical roll-right
+        # sign comes back out.
+        (lambda x: -x, 1.0),
+    ],
+)
+def test_a_profile_override_replaces_both_the_property_and_its_sign(
+    monkeypatch, convert, expected_sign
+):
+    """observation_props is the escape hatch for an aircraft whose FCS exposes
+    a different surface, so it has to carry a conversion, not just a name."""
+    from aero_gym.simulators.jsbsim import aircraft, properties
+
+    monkeypatch.setitem(
+        aircraft.PROFILES,
+        "737",
+        dataclasses.replace(
+            aircraft.PROFILES["737"],
+            observation_props={
+                V.AILERON_POS: properties.ObservationMapping(
+                    "fcs/right-aileron-pos-norm", convert
+                )
+            },
+        ),
+    )
+    sim = JSBSimSimulator()
+    try:
+        sim.reset(make_steady_flight_scenario(aircraft="737", max_episode_steps=None))
+        sim.set_control(V.AILERON, 0.5)
+        for _ in range(20):
+            sim.run()
+        assert sim.observe(V.AILERON_POS) == pytest.approx(expected_sign * 0.5, abs=0.01)
+    finally:
+        sim.close()
+
+
+def test_an_unpublished_property_names_the_variable_the_property_and_the_model(
+    monkeypatch,
+):
     from aero_gym.simulator import SimulatorError
     from aero_gym.simulators.jsbsim import properties
-    from aero_gym.variables import FlightVariable as V
 
     sim = JSBSimSimulator()
     scenario = make_steady_flight_scenario(max_episode_steps=None)
-    original = properties.OBSERVATION_MAP[V.AOS]
-    properties.OBSERVATION_MAP[V.AOS] = properties.ObservationMapping(
-        "fcs/no-such-property", original.to_canonical
+    monkeypatch.setitem(
+        properties.OBSERVATION_MAP,
+        V.AOS,
+        properties.ObservationMapping(
+            "fcs/no-such-property", properties.OBSERVATION_MAP[V.AOS].to_canonical
+        ),
     )
     try:
-        with pytest.raises(SimulatorError, match="AOS"):
+        with pytest.raises(
+            SimulatorError, match=r"AOS.*'fcs/no-such-property'.*'c172p'"
+        ):
             sim.reset(dataclasses.replace(scenario, observation_variables=(V.AOS,)))
     finally:
-        properties.OBSERVATION_MAP[V.AOS] = original
         sim.close()

@@ -21,3 +21,6 @@ CLAUDE.md
 runs/
 mlruns/
 mlflow.db
+
+# Subagent-driven development scratch (ledger, briefs, review packages)
+.superpowers/

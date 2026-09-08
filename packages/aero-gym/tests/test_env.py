@@ -152,21 +152,3 @@ def test_a_feature_reading_an_unobserved_variable_names_it(initial_conditions, f
     env = AeroGymEnv(scenario, simulator=fake_simulator)
     with pytest.raises(KeyError, match="AOA"):
         env.reset(seed=0)
-
-
-def test_initial_action_falls_back_for_a_control_with_no_position(
-    initial_conditions, fake_simulator
-):
-    """Every current action variable has a position counterpart; a future one
-    that does not gets a neutral value inside its own box rather than a crash."""
-    scenario = Scenario(
-        name="no-position",
-        initial_conditions=initial_conditions,
-        reward_fn=lambda t: (0.0, False),
-        action_variables=(V.THROTTLE,),
-        observation_variables=(V.ROLL,),
-    )
-    env = AeroGymEnv(scenario, simulator=fake_simulator)
-    env.reset(seed=0)
-    fake_simulator.state[V.THROTTLE_POS] = 0.7
-    assert env.initial_action().tolist() == pytest.approx([0.7])

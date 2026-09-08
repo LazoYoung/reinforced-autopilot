@@ -103,9 +103,12 @@ class AeroGymEnv(gym.Env):
         Meaningful only after reset(), and only because the simulator settles
         the FCS there -- before that the positions have not been computed.
         """
+        # Indexed directly, not .get()/fallback: a future action variable with
+        # no position entry should raise KeyError naming it, the same
+        # fail-loud choice observe() makes for a missing property, rather than
+        # silently seeding DeltaAction's accumulator with a wrong 0.0.
         values = [
-            self.simulator.observe(ACTION_POSITION[var]) if var in ACTION_POSITION else 0.0
-            for var in self.scenario.action_variables
+            self.simulator.observe(ACTION_POSITION[var]) for var in self.scenario.action_variables
         ]
         return np.clip(
             np.array(values, np.float32), self.action_space.low, self.action_space.high

@@ -82,8 +82,10 @@ class JSBSimSimulator(Simulator):
         # position property still reads 0 while the commands above say 0.7.
         # Settling one agent step's worth of physics costs 0.1 s of simulated
         # time -- a few feet of altitude at cruise -- and buys a first
-        # observation that is true. Measured: after 12 steps the elevator
-        # position reads 0.69987 against a commanded 0.7.
+        # observation that is true. Measured on the c172p: after 12 steps
+        # fcs/throttle-pos-norm reads 0.7 against a commanded 0.7 (the profile
+        # has no fcs/elevator-cmd-norm, only fcs/pitch-trim-cmd-norm = 0.2,
+        # which fcs/elevator-pos-norm converges toward instead).
         for _ in range(max(1, round(1.0 / (self._dt * scenario.agent_hz)))):
             self.run()
         if self._viewer is not None and not self._viewer_synced:

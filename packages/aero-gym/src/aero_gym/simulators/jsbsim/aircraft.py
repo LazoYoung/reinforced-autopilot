@@ -11,6 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from aero_gym.variables import FlightVariable
+
+from .properties import ObservationMapping
+
 CockpitFn = Callable[[object, dict[str, float]], dict[str, object]]
 """Builds aircraft-specific cockpit writes from the FDM and the pilot controls."""
 
@@ -35,6 +39,21 @@ class AircraftProfile:
     cockpit: CockpitFn | None = None
     mirrors: tuple[tuple[str, str], ...] = ()
     republish: tuple[str, ...] = ()
+    observation_props: dict[FlightVariable, ObservationMapping] = field(default_factory=dict)
+    """Per-aircraft replacements for entries of OBSERVATION_MAP.
+
+    The pos-norm property names are not universal: the c172p publishes a
+    left/right aileron pair and no `fcs/aileron-pos-norm` at all. A full
+    ObservationMapping rather than a bare property name, because a substituted
+    surface need not share the sign of the one it replaces.
+    """
+
+
+# Neither the c172p nor the stock 737 publishes fcs/aileron-pos-norm; both have
+# a left/right pair instead. The left surface is the one that follows a
+# roll-right command with a positive value on both models (the 737's right
+# aileron reads the negation of it), so it needs no sign change.
+_LEFT_AILERON_POS = ObservationMapping("fcs/left-aileron-pos-norm", lambda x: x)
 
 
 def _c172p_cockpit(fdm, controls: dict[str, float]) -> dict[str, object]:
@@ -94,6 +113,7 @@ PROFILES: dict[str, AircraftProfile] = {
         # c172p routes its pressure instruments through a dead JSBSim static
         # source; point them at the pressure FlightGear still computes itself.
         mirrors=(("/systems/static-pressure-inhg-selected", "/environment/pressure-inhg"),),
+        observation_props={FlightVariable.AILERON_POS: _LEFT_AILERON_POS},
     ),
     "737": AircraftProfile(
         flightgear="737-300",
@@ -112,6 +132,7 @@ PROFILES: dict[str, AircraftProfile] = {
         },
         cockpit=_b737_cockpit,
         republish=_B737_REPUBLISH,
+        observation_props={FlightVariable.AILERON_POS: _LEFT_AILERON_POS},
     ),
 }
 

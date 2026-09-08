@@ -9,10 +9,10 @@ from pathlib import Path
 from aero_gym.scenario import Scenario
 from aero_gym.simulator import Simulator, SimulatorError
 from aero_gym.variables import FlightVariable
-from .aircraft import profile_for
+from .aircraft import AircraftProfile, profile_for
 from .cockpit import CockpitSync
 from .flightgear import FlightGearViewer
-from .properties import CONTROL_MAP, OBSERVATION_MAP
+from .properties import CONTROL_MAP, OBSERVATION_MAP, ObservationMapping
 
 _OUTPUT_DIRECTIVE = (
     '<?xml version="1.0"?>\n'
@@ -34,6 +34,7 @@ class JSBSimSimulator(Simulator):
         self._fdm = None
         self._aircraft: str | None = None
         self._engines = 1
+        self._profile: AircraftProfile | None = None
         self._viewer: FlightGearViewer | None = None
         self._viewer_synced = False
         self._visualization: dict[str, object] | None = None
@@ -46,6 +47,8 @@ class JSBSimSimulator(Simulator):
     def reset(self, scenario: Scenario) -> None:
         ic = scenario.initial_conditions
         profile = profile_for(scenario.aircraft)
+        # observe() resolves per-aircraft property overrides through it
+        self._profile = profile
         if self._viewer is not None:
             if self._viewer.aircraft is None:
                 # Otherwise FlightGear renders whatever it defaults to, which
@@ -82,6 +85,16 @@ class JSBSimSimulator(Simulator):
             if self._viewer.wait_until_ready():
                 self._start_cockpit_sync(fdm)
             self._viewer_synced = True
+        self._validate_observations(scenario)
+
+    def _validate_observations(self, scenario: Scenario) -> None:
+        """Read every observed variable once so a missing property fails here.
+
+        Without it the failure surfaces mid-rollout, with nothing pointing at
+        the aircraft profile as the cause.
+        """
+        for var in scenario.observation_variables:
+            self.observe(var)
 
     def _start_cockpit_sync(self, fdm) -> None:
         """Supply the cockpit state FlightGear's disabled flight model can't.
@@ -115,9 +128,25 @@ class JSBSimSimulator(Simulator):
         if math.isnan(fdm["position/h-sl-ft"]):
             raise SimulatorError("JSBSim state diverged (NaN altitude)")
 
+    def _mapping(self, var: FlightVariable) -> ObservationMapping:
+        if self._profile is not None and var in self._profile.observation_props:
+            return self._profile.observation_props[var]
+        return OBSERVATION_MAP[var]
+
     def observe(self, var: FlightVariable) -> float:
-        mapping = OBSERVATION_MAP[var]
-        return mapping.to_canonical(float(self._require_fdm()[mapping.prop]))
+        mapping = self._mapping(var)
+        try:
+            value = float(self._require_fdm()[mapping.prop])
+        except KeyError as exc:
+            # JSBSim's own message names only the property. Naming the variable
+            # and pointing at the profile is what turns this from a mystery
+            # hundreds of steps into a rollout into a one-line fix.
+            raise SimulatorError(
+                f"{var.name} needs JSBSim property {mapping.prop!r}, which model "
+                f"{self._aircraft!r} does not publish; add an observation_props "
+                "override to its AircraftProfile"
+            ) from exc
+        return mapping.to_canonical(value)
 
     def enable_visualization(
         self,

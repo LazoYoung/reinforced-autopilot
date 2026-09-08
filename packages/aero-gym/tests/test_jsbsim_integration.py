@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -228,3 +230,41 @@ def test_both_engines_answer_the_agent_over_a_flight():
         assert fdm["fcs/throttle-pos-norm[1]"] == pytest.approx(0.35, abs=0.01)
     finally:
         env.close()
+
+
+def test_every_profile_publishes_its_control_positions():
+    """A missing pos-norm property is an aircraft fact, so it is caught per aircraft."""
+    from aero_gym.simulators.jsbsim.aircraft import PROFILES
+    from aero_gym.variables import ACTION_POSITION
+
+    for model in PROFILES:
+        sim = JSBSimSimulator()
+        scenario = make_steady_flight_scenario(aircraft=model, max_episode_steps=None)
+        scenario = dataclasses.replace(
+            scenario, observation_variables=tuple(ACTION_POSITION.values())
+        )
+        try:
+            sim.reset(scenario)
+            for var in ACTION_POSITION.values():
+                assert np.isfinite(sim.observe(var)), f"{model}: {var.name}"
+        finally:
+            sim.close()
+
+
+def test_an_unpublished_property_names_the_variable_and_the_profile():
+    from aero_gym.simulator import SimulatorError
+    from aero_gym.simulators.jsbsim import properties
+    from aero_gym.variables import FlightVariable as V
+
+    sim = JSBSimSimulator()
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    original = properties.OBSERVATION_MAP[V.AOS]
+    properties.OBSERVATION_MAP[V.AOS] = properties.ObservationMapping(
+        "fcs/no-such-property", original.to_canonical
+    )
+    try:
+        with pytest.raises(SimulatorError, match="AOS"):
+            sim.reset(dataclasses.replace(scenario, observation_variables=(V.AOS,)))
+    finally:
+        properties.OBSERVATION_MAP[V.AOS] = original
+        sim.close()

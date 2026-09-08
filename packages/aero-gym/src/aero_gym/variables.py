@@ -43,6 +43,14 @@ class FlightVariable(enum.Enum):
     YAW_RATE = "yaw_rate"
     AOA = "aoa"
     AOS = "aos"
+    # Control positions (observations). Distinct from the ACTION variables
+    # above: those are what the agent commands, these are where the surface
+    # actually is -- command plus trim, which is information the command alone
+    # does not carry.
+    ELEVATOR_POS = "elevator_pos"
+    AILERON_POS = "aileron_pos"
+    RUDDER_POS = "rudder_pos"
+    THROTTLE_POS = "throttle_pos"
 
 
 ACTION_SPECS: dict[FlightVariable, VariableSpec] = {
@@ -64,7 +72,24 @@ OBSERVATION_SPECS: dict[FlightVariable, VariableSpec] = {
     FlightVariable.YAW_RATE: VariableSpec("deg/s", -360.0, 360.0, "body yaw rate r"),
     FlightVariable.AOA: VariableSpec("deg", -90.0, 90.0, "angle of attack (alpha)"),
     FlightVariable.AOS: VariableSpec("deg", -90.0, 90.0, "angle of sideslip (beta)"),
+    FlightVariable.ELEVATOR_POS: VariableSpec("norm", -1.0, 1.0, "elevator deflection, + = pitch up"),
+    FlightVariable.AILERON_POS: VariableSpec("norm", -1.0, 1.0, "aileron deflection, + = roll right"),
+    FlightVariable.RUDDER_POS: VariableSpec("norm", -1.0, 1.0, "rudder deflection, + = yaw right"),
+    FlightVariable.THROTTLE_POS: VariableSpec("norm", 0.0, 1.0, "throttle position, 0 = idle"),
 }
 
 ALL_ACTION_VARIABLES: tuple[FlightVariable, ...] = tuple(ACTION_SPECS)
 ALL_OBSERVATION_VARIABLES: tuple[FlightVariable, ...] = tuple(OBSERVATION_SPECS)
+
+ACTION_POSITION: dict[FlightVariable, FlightVariable] = {
+    FlightVariable.ELEVATOR: FlightVariable.ELEVATOR_POS,
+    FlightVariable.AILERON: FlightVariable.AILERON_POS,
+    FlightVariable.RUDDER: FlightVariable.RUDDER_POS,
+    FlightVariable.THROTTLE: FlightVariable.THROTTLE_POS,
+}
+"""The observation that reports where each commanded control actually is.
+
+`AeroGymEnv.initial_action` uses it to describe the aircraft's post-reset
+control state as an action, which is what DeltaAction seeds its accumulator
+from.
+"""

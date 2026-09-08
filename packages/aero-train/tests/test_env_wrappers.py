@@ -45,3 +45,94 @@ def test_an_unbounded_feature_is_rejected_by_index():
 def test_a_degenerate_bound_is_rejected():
     with pytest.raises(ValueError, match="low < high"):
         ScaleObservation(BoxEnv([0.0, 1.0], [0.0, 2.0]))
+
+
+from aero_train.envs.delta import DeltaAction
+
+
+class RecordingBoxEnv(BoxEnv):
+    """Keeps the last action so the accumulator can be read back."""
+
+    def __init__(self, low, high, initial=None) -> None:
+        super().__init__([-1.0] * 4, [1.0] * 4)
+        self.action_space = gym.spaces.Box(
+            np.array(low, np.float32), np.array(high, np.float32), dtype=np.float32
+        )
+        self.last_action = None
+        self._initial = initial
+
+    def initial_action(self):
+        if self._initial is None:
+            return np.zeros(self.action_space.shape, np.float32)
+        return np.array(self._initial, np.float32)
+
+    def step(self, action):
+        self.last_action = np.asarray(action, np.float32).copy()
+        return super().step(action)
+
+
+def _four_axis_env(initial=None):
+    return RecordingBoxEnv([-1.0, -1.0, -1.0, 0.0], [1.0, 1.0, 1.0, 1.0], initial)
+
+
+def test_the_action_space_is_three_to_the_number_of_axes():
+    env = DeltaAction(_four_axis_env())
+    assert env.action_space == gym.spaces.Discrete(81)
+
+
+def test_the_null_action_moves_nothing():
+    env = DeltaAction(_four_axis_env(initial=[0.1, -0.2, 0.3, 0.7]))
+    env.reset()
+    env.step(env.null_action)
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.1, -0.2, 0.3, 0.7])
+    assert env.null_action == 40
+
+
+def test_each_axis_gets_its_own_base_three_digit():
+    env = DeltaAction(_four_axis_env(), delta=0.1)
+    env.reset()
+    # digit 0 is axis 0: index 41 == null (40) + 1 -> axis 0 moves +delta
+    env.step(41)
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.1, 0.0, 0.0, 0.0])
+    # index 40 + 3 -> axis 1 moves +delta, axis 0 unchanged
+    env.step(43)
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.1, 0.1, 0.0, 0.0])
+
+
+def test_the_accumulator_integrates_and_clips_at_the_axis_bounds():
+    env = DeltaAction(_four_axis_env(), delta=0.5)
+    env.reset()
+    for _ in range(5):
+        env.step(41)  # axis 0 up by 0.5 each time
+    assert env.unwrapped.last_action[0] == pytest.approx(1.0)
+
+
+def test_reset_seeds_the_accumulator_from_the_aircrafts_startup_state():
+    """Otherwise the first step chops the throttle to idle, undoing the
+    flyable state the aircraft profile establishes."""
+    env = DeltaAction(_four_axis_env(initial=[0.0, 0.0, 0.0, 0.7]))
+    env.reset()
+    env.step(env.null_action)
+    assert env.unwrapped.last_action[3] == pytest.approx(0.7)
+
+
+def test_reset_reseeds_between_episodes():
+    env = DeltaAction(_four_axis_env(initial=[0.0, 0.0, 0.0, 0.7]), delta=0.5)
+    env.reset()
+    for _ in range(4):
+        env.step(41)
+    env.reset()
+    env.step(env.null_action)
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.0, 0.0, 0.0, 0.7])
+
+
+def test_it_reaches_initial_action_through_an_intervening_wrapper():
+    env = DeltaAction(ScaleObservation(_four_axis_env(initial=[0.0, 0.0, 0.0, 0.7])))
+    env.reset()
+    env.step(env.null_action)
+    assert env.unwrapped.last_action[3] == pytest.approx(0.7)
+
+
+def test_a_bad_delta_is_rejected():
+    with pytest.raises(ValueError, match=r"\(0, 1\]"):
+        DeltaAction(_four_axis_env(), delta=0.0)

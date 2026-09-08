@@ -161,3 +161,54 @@ def test_flatten_config_produces_dotted_string_params():
     assert flat["rollout.n_workers"] == "1"
     assert flat["algo.type"] == "dqn"
     assert flat["env.id"] == "CartPole-v1"
+
+
+def test_env_needs_exactly_one_of_id_and_scenario():
+    from aero_train.config import EnvConfig
+
+    with pytest.raises(ValueError, match="exactly one"):
+        EnvConfig()
+    with pytest.raises(ValueError, match="exactly one"):
+        EnvConfig(id="CartPole-v1", scenario="steady_flight")
+
+
+def test_scenario_only_settings_are_rejected_on_the_gymnasium_branch():
+    from aero_train.config import EnvConfig
+
+    for kwargs in (
+        {"render_mode": "flightgear"},
+        {"scenario_kwargs": {"aircraft": "737"}},
+        {"delta": 0.2},
+    ):
+        with pytest.raises(ValueError, match="aero_gym scenario"):
+            EnvConfig(id="CartPole-v1", **kwargs)
+
+
+def test_the_episode_limit_has_exactly_one_home():
+    from aero_train.config import EnvConfig
+
+    with pytest.raises(ValueError, match="env.max_episode_steps"):
+        EnvConfig(scenario="steady_flight", scenario_kwargs={"max_episode_steps": 10})
+
+
+def test_render_mode_and_delta_are_validated():
+    from aero_train.config import EnvConfig
+
+    with pytest.raises(ValueError, match="flightgear"):
+        EnvConfig(scenario="steady_flight", render_mode="opengl")
+    with pytest.raises(ValueError, match=r"\(0, 1\]"):
+        EnvConfig(scenario="steady_flight", delta=1.5)
+
+
+def test_a_scenario_env_round_trips_through_a_config_dict():
+    from aero_train.config import config_from_dict, config_to_dict
+
+    cfg = config_from_dict(
+        {
+            "run_name": "flight",
+            "env": {"scenario": "steady_flight", "scenario_kwargs": {"aircraft": "737"}},
+            "algo": {"type": "dqn"},
+        }
+    )
+    assert cfg.env.scenario == "steady_flight"
+    assert config_to_dict(cfg)["env"]["scenario_kwargs"] == {"aircraft": "737"}

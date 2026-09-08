@@ -11,6 +11,11 @@ from .dqn import DQN, DQNAgent
 __all__ = ["Algorithm", "DQN", "DQNAgent", "build_algorithm"]
 
 
+def _env_label(cfg: TrainConfig) -> str:
+    """Whichever of the two env identifiers this config actually set."""
+    return cfg.env.scenario or cfg.env.id
+
+
 def build_algorithm(
     cfg: TrainConfig, obs_space: gym.Space, act_space: gym.Space
 ) -> Algorithm:
@@ -22,7 +27,7 @@ def build_algorithm(
     if isinstance(cfg.algo, DQNConfig):
         if not isinstance(act_space, gym.spaces.Discrete):
             raise ValueError(
-                f"DQN needs a discrete action space, but env {cfg.env.id!r} exposes "
+                f"DQN needs a discrete action space, but env {_env_label(cfg)!r} exposes "
                 f"{type(act_space).__name__}. Use a discretizing wrapper (DeltaAction, "
                 "Phase 2) or choose a continuous-native algorithm."
             )

@@ -127,10 +127,35 @@ class DQNConfig:
                 raise ValueError(f"algo.{name} must be positive")
 
 
+@dataclass(frozen=True, slots=True)
+class RandomConfig:
+    type: Literal["random"] = "random"
+
+
+@dataclass(frozen=True, slots=True)
+class ConstantConfig:
+    type: Literal["constant"] = "constant"
+    action: int | None = None
+    """Which action to hold. None means the middle index of the action space,
+    which for DeltaAction is the all-zero-delta action by construction."""
+
+    def __post_init__(self) -> None:
+        if self.action is None:
+            return
+        if isinstance(self.action, bool) or not isinstance(self.action, int):
+            raise ValueError("algo.action must be an integer or null")
+        if self.action < 0:
+            raise ValueError("algo.action must be non-negative")
+
+
 # Widens to `DQNConfig | A2CConfig | DDPGConfig` in Phase 2. The registry is the
 # discriminator for the tagged union, keyed on the YAML `type:` field.
-AlgoConfig = DQNConfig
-ALGO_CONFIGS: dict[str, type] = {"dqn": DQNConfig}
+AlgoConfig = DQNConfig | RandomConfig | ConstantConfig
+ALGO_CONFIGS: dict[str, type] = {
+    "dqn": DQNConfig,
+    "random": RandomConfig,
+    "constant": ConstantConfig,
+}
 
 
 @dataclass(frozen=True, slots=True)

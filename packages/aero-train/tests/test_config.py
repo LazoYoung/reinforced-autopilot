@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,9 @@ from aero_train.config import (
     flatten_config,
     load_config,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CONFIGS_DIR = REPO_ROOT / "configs"
 
 MINIMAL = {
     "run_name": "t",
@@ -243,3 +248,26 @@ def test_flightgear_needs_exactly_one_environment_in_total():
         config_from_dict({**base, "rollout": {"n_workers": 1, "envs_per_worker": 8}})
     cfg = config_from_dict({**base, "rollout": {"n_workers": 1, "envs_per_worker": 1}})
     assert cfg.env.render_mode == "flightgear"
+
+
+def test_the_three_steady_flight_configs_fly_the_identical_task():
+    """dqn/random/constant_steady_flight.yaml exist to be compared against each
+    other; a baseline flown on a different env or a different rollout topology
+    would not be a baseline. Parsing all three is not enough to show that --
+    this compares the actual env: and rollout: dataclasses field by field, so a
+    config drifting out of sync fails here instead of silently producing an
+    uncomparable curve in MLflow."""
+    dqn = load_config(CONFIGS_DIR / "dqn_steady_flight.yaml")
+    random_ = load_config(CONFIGS_DIR / "random_steady_flight.yaml")
+    constant = load_config(CONFIGS_DIR / "constant_steady_flight.yaml")
+
+    for other in (random_, constant):
+        assert dataclasses.asdict(dqn.env) == dataclasses.asdict(other.env)
+        assert dataclasses.asdict(dqn.rollout) == dataclasses.asdict(other.rollout)
+
+    # And the configs must actually differ on the one thing they're supposed
+    # to: which algorithm flies. Otherwise the equality checks above could
+    # pass trivially against three copies of the same file.
+    assert dqn.algo.type == "dqn"
+    assert random_.algo.type == "random"
+    assert constant.algo.type == "constant"

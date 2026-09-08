@@ -2,18 +2,45 @@
 
 from __future__ import annotations
 
-from aero_gym.scenario import InitialConditions, Scenario, Transition
+from aero_gym.scenario import InitialConditions, ObservationFeature, Scenario, Transition, raw
 from aero_gym.simulators.jsbsim.aircraft import profile_for
-from aero_gym.variables import (
-    ALL_ACTION_VARIABLES,
-    ALL_OBSERVATION_VARIABLES,
-    FlightVariable as V,
-)
+from aero_gym.variables import ALL_ACTION_VARIABLES, VariableSpec, FlightVariable as V
 
 
 def heading_error_deg(current: float, target: float) -> float:
     """Signed shortest-path heading error in (-180, 180]."""
     return (target - current + 180.0) % 360.0 - 180.0
+
+
+ALTITUDE_BAND_FT = 500.0
+HEADING_BAND_DEG = 10.0
+VERTICAL_SPEED_BAND_FPM = 1000.0
+
+ROLL_LIMIT_DEG = 75.0
+PITCH_LIMIT_DEG = 45.0
+AOA_LIMIT_DEG = 20.0
+FLOOR_ALTITUDE_FT = 1000.0
+
+# The only two bounds not derived from a termination condition. _to_array clips,
+# so an excursion saturates rather than wrecking the observation scale, and an
+# aircraft rolling faster than this is about to terminate on ROLL_LIMIT_DEG.
+ROLL_RATE_SCALE_DEG_S = 60.0
+PITCH_RATE_SCALE_DEG_S = 30.0
+
+OBSERVATION_VARIABLES = (
+    V.ALTITUDE,
+    V.HEADING,
+    V.VERTICAL_SPEED,
+    V.ROLL,
+    V.PITCH,
+    V.AOA,
+    V.ROLL_RATE,
+    V.PITCH_RATE,
+    V.ELEVATOR_POS,
+    V.AILERON_POS,
+    V.RUDDER_POS,
+    V.THROTTLE_POS,
+)
 
 
 def make_steady_flight_scenario(
@@ -28,9 +55,11 @@ def make_steady_flight_scenario(
 ) -> Scenario:
     """Level-flight hold task starting near KSFO by default.
 
-    Reward is highest (0) when the aircraft keeps the target altitude and
-    heading with wings level; each error term subtracts proportionally. The
-    episode terminates when the aircraft leaves a safe flight envelope.
+    The episode is a success when it survives its step limit inside the
+    band: altitude within ALTITUDE_BAND_FT of target, heading within
+    HEADING_BAND_DEG, and vertical speed within VERTICAL_SPEED_BAND_FPM.
+    Reward is 1.0 on target and 0.0 at the band's corner. Leaving the band,
+    or the wider flight envelope, ends the episode.
 
     Altitude and airspeed default to a cruise the chosen aircraft can hold, so
     that naming an aircraft is enough to get a flyable task.
@@ -43,20 +72,58 @@ def make_steady_flight_scenario(
     target_altitude_ft = altitude_ft
     target_heading_deg = heading_deg % 360.0
 
+    features = (
+        ObservationFeature(
+            "altitude_error_ft",
+            VariableSpec("ft", -ALTITUDE_BAND_FT, ALTITUDE_BAND_FT, "altitude minus target"),
+            lambda obs: obs[V.ALTITUDE] - target_altitude_ft,
+        ),
+        ObservationFeature(
+            "heading_error_deg",
+            VariableSpec(
+                "deg", -HEADING_BAND_DEG, HEADING_BAND_DEG, "signed shortest-path heading error"
+            ),
+            lambda obs: heading_error_deg(obs[V.HEADING], target_heading_deg),
+        ),
+        raw(V.VERTICAL_SPEED, -VERTICAL_SPEED_BAND_FPM, VERTICAL_SPEED_BAND_FPM),
+        raw(V.ROLL, -ROLL_LIMIT_DEG, ROLL_LIMIT_DEG),
+        raw(V.PITCH, -PITCH_LIMIT_DEG, PITCH_LIMIT_DEG),
+        raw(V.AOA, -AOA_LIMIT_DEG, AOA_LIMIT_DEG),
+        raw(V.ROLL_RATE, -ROLL_RATE_SCALE_DEG_S, ROLL_RATE_SCALE_DEG_S),
+        raw(V.PITCH_RATE, -PITCH_RATE_SCALE_DEG_S, PITCH_RATE_SCALE_DEG_S),
+        raw(V.ELEVATOR_POS),
+        raw(V.AILERON_POS),
+        raw(V.RUDDER_POS),
+        raw(V.THROTTLE_POS),
+    )
+
     def reward_fn(t: Transition) -> tuple[float, bool]:
         obs = t.obs
-        altitude_err = abs(obs[V.ALTITUDE] - target_altitude_ft)
-        heading_err = abs(heading_error_deg(obs[V.HEADING], target_heading_deg))
-        reward = -(
-            altitude_err / 300.0
-            + heading_err / 45.0
-            + abs(obs[V.ROLL]) / 60.0
-        )
+        alt = abs(obs[V.ALTITUDE] - target_altitude_ft) / ALTITUDE_BAND_FT
+        hdg = abs(heading_error_deg(obs[V.HEADING], target_heading_deg)) / HEADING_BAND_DEG
+        vs = abs(obs[V.VERTICAL_SPEED]) / VERTICAL_SPEED_BAND_FPM
+        # Each term is normalized by its own band limit, so inside the band all
+        # three are <= 1 and the reward is in [0, 1]: 1.0 on target, 0.0 at the
+        # corner. That it is never negative in band is the point. Leaving the
+        # band ends the episode, and under the old strictly-negative reward
+        # that would have made quitting on step 1 score ~0 and beat any real
+        # flying -- Transition carries no elapsed-step count, so the reward
+        # function cannot see how much episode it is throwing away and cannot
+        # price a death penalty. Not clamped below: a violent excursion scores
+        # slightly negative on its final step, a small penalty for the manner
+        # of failure that never competes with the forfeited future reward.
+        reward = 1.0 - (alt + hdg + vs) / 3.0
         terminated = (
-            obs[V.ALTITUDE] < 1000.0
-            or abs(obs[V.ROLL]) > 75.0
-            or abs(obs[V.PITCH]) > 45.0
-            or abs(obs[V.AOA]) > 20.0
+            alt > 1.0
+            or hdg > 1.0
+            or vs > 1.0
+            # Envelope guards. Mostly preempted by the band, but |roll| can
+            # exceed the limit inside it during a fast roll, and the floor
+            # matters for a scenario configured with a low target altitude.
+            or abs(obs[V.ROLL]) > ROLL_LIMIT_DEG
+            or abs(obs[V.PITCH]) > PITCH_LIMIT_DEG
+            or abs(obs[V.AOA]) > AOA_LIMIT_DEG
+            or obs[V.ALTITUDE] < FLOOR_ALTITUDE_FT
         )
         return reward, terminated
 
@@ -72,7 +139,8 @@ def make_steady_flight_scenario(
             airspeed_kts=airspeed_kts,
         ),
         action_variables=ALL_ACTION_VARIABLES,
-        observation_variables=ALL_OBSERVATION_VARIABLES,
+        observation_variables=OBSERVATION_VARIABLES,
+        observation_features=features,
         reward_fn=reward_fn,
         aircraft=aircraft,
         agent_hz=agent_hz,

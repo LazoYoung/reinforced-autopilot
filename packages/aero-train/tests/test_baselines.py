@@ -60,10 +60,27 @@ def test_a_baseline_never_learns_but_still_counts_frames():
 
 
 def test_a_baseline_round_trips_through_its_state_dict():
+    """restored is freshly built, so its global_step is already 0 before
+    load_state_dict runs -- asserting equality against an algo that never
+    observed anything would pass on a load_state_dict that does nothing.
+    Advancing algo's frames first, so the round trip has something to lose,
+    is what makes this a real check of load_state_dict rather than 0 == 0."""
+    from aero_train.primitives import Segment
+
     algo = build_algorithm(_cfg({"type": "random"}), *_spaces(81))
+    algo.observe(
+        Segment(
+            obs=np.zeros((3, 2, 4), np.float32),
+            actions=np.zeros((2, 2), np.int64),
+            rewards=np.zeros((2, 2), np.float32),
+            terminated=np.zeros((2, 2), bool),
+            truncated=np.zeros((2, 2), bool),
+            valid=np.ones((2, 2), bool),
+        )
+    )
     restored = build_algorithm(_cfg({"type": "random"}), *_spaces(81))
     restored.load_state_dict(algo.state_dict())
-    assert restored.global_step == algo.global_step
+    assert restored.global_step == algo.global_step != 0
 
 
 def test_a_baseline_rejects_a_continuous_action_space():

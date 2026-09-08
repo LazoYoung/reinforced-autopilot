@@ -58,6 +58,18 @@ class _Baseline(Algorithm):
 
 class Random(_Baseline):
     def make_agent(self) -> Agent:
+        # +1, not cfg.seed itself: decorrelates this action stream from the
+        # other consumers seeded off the same run config (env resets, the
+        # rollout engine) so the baseline's randomness isn't a shadow of
+        # theirs.
+        #
+        # evaluate_policy calls make_agent() fresh each time it evaluates, so
+        # this reseeds from the same fixed value on every call. Combined with
+        # eval's fixed per-episode seeds, every periodic evaluation of this
+        # baseline replays an identical trajectory -- its eval/return_mean
+        # curve in MLflow is flat by construction, not a sign anything is
+        # broken. Training-rollout metrics are unaffected: there the agent is
+        # built once and its RNG advances normally across the whole run.
         return RandomAgent(self.n_actions, np.random.default_rng(self._seed + 1))
 
 

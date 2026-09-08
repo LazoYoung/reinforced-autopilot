@@ -220,7 +220,26 @@ def test_a_scenario_env_round_trips_through_a_config_dict():
                 "delta": 0.05,
             },
             "algo": {"type": "dqn"},
+            # render_mode "flightgear" needs exactly one environment in total;
+            # the default rollout (envs_per_worker=8) would fail that check.
+            "rollout": {"n_workers": 1, "envs_per_worker": 1},
         }
     )
     assert cfg.env.scenario == "steady_flight"
     assert config_from_dict(config_to_dict(cfg)) == cfg
+
+
+def test_flightgear_needs_exactly_one_environment_in_total():
+    """Not `n_workers > 1`: one worker with the default 8 envs per worker would
+    still launch eight viewers, all fighting for one screen."""
+    from aero_train.config import config_from_dict
+
+    base = {
+        "run_name": "fg",
+        "env": {"scenario": "steady_flight", "render_mode": "flightgear"},
+        "algo": {"type": "dqn"},
+    }
+    with pytest.raises(ValueError, match="one environment"):
+        config_from_dict({**base, "rollout": {"n_workers": 1, "envs_per_worker": 8}})
+    cfg = config_from_dict({**base, "rollout": {"n_workers": 1, "envs_per_worker": 1}})
+    assert cfg.env.render_mode == "flightgear"

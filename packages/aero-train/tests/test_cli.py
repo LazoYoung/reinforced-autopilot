@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import textwrap
 
+import gymnasium as gym
+import numpy as np
 import pytest
 
 from aero_train import cli
@@ -116,10 +118,91 @@ def test_flightgear_is_only_offered_on_eval(config_path):
         cli.main(["run", str(config_path), "--flightgear"])
 
 
-def test_flightgear_eval_reports_that_it_lands_in_phase_2(config_path, tmp_path):
-    cli.main(["run", str(config_path)])
-    with pytest.raises(NotImplementedError, match="Phase 2"):
-        cli.main(["eval", str(tmp_path / "ckpt" / "latest.pt"), "--flightgear"])
+class _ScriptedEnv(gym.Env):
+    """One-step stand-in with the flight stack's spaces, so a checkpoint built
+    against them reloads. No aero_gym, no JSBSim: this test is about the flag."""
+
+    def __init__(self, n_obs: int = 12, n_actions: int = 81) -> None:
+        self.observation_space = gym.spaces.Box(-1.0, 1.0, (n_obs,), np.float32)
+        self.action_space = gym.spaces.Discrete(n_actions)
+
+    def reset(self, *, seed=None, options=None):
+        return np.zeros(self.observation_space.shape, np.float32), {}
+
+    def step(self, action):
+        return np.zeros(self.observation_space.shape, np.float32), 1.0, True, False, {}
+
+
+def _write_checkpoint(tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81):
+    """A checkpoint for an arbitrary env config, without running a training loop."""
+    from aero_train.algo import build_algorithm
+    from aero_train.config import config_from_dict, config_to_dict
+
+    cfg = config_from_dict(
+        {
+            "run_name": "fg",
+            "seed": 0,
+            "total_steps": 64,
+            "env": env,
+            "algo": {"type": "dqn", "hidden_sizes": [8], "buffer_size": 200,
+                     "warmup_frames": 16, "batch_size": 8},
+            "rollout": {"engine": "local", "envs_per_worker": 1, "frames_per_iter": 8},
+            "tracking": {"enabled": False},
+        }
+    )
+    algo = build_algorithm(
+        cfg,
+        gym.spaces.Box(-1.0, 1.0, (n_obs,), np.float32),
+        gym.spaces.Discrete(n_actions),
+    )
+    path = tmp_path / "ckpt.pt"
+    save_checkpoint(
+        path,
+        {
+            "config": config_to_dict(cfg),
+            "algo": algo.state_dict(),
+            "global_step": 0,
+            "frames": 0,
+            "best_return": float("-inf"),
+            "buffer": None,
+        },
+    )
+    return path
+
+
+def test_eval_with_flightgear_renders_through_the_scenario_branch(monkeypatch, tmp_path):
+    """The flag was accepted and unimplemented since Phase 1; it now sets the
+    render mode on a copy of the env config rather than raising."""
+    seen = {}
+
+    def fake_make_env_fn(env_cfg):
+        seen["render_mode"] = env_cfg.render_mode
+        return _ScriptedEnv
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    path = _write_checkpoint(tmp_path, env={"scenario": "steady_flight"})
+    assert cli.main(["eval", str(path), "--episodes", "1", "--flightgear"]) == 0
+    assert seen["render_mode"] == "flightgear"
+
+
+def test_eval_without_flightgear_leaves_the_env_config_alone(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_make_env_fn(env_cfg):
+        seen["render_mode"] = env_cfg.render_mode
+        return _ScriptedEnv
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    path = _write_checkpoint(tmp_path, env={"scenario": "steady_flight"})
+    assert cli.main(["eval", str(path), "--episodes", "1"]) == 0
+    assert seen["render_mode"] is None
+
+
+def test_eval_with_flightgear_on_a_gymnasium_env_says_why_not(tmp_path):
+    """It must fail before probing spaces, so no env is ever constructed."""
+    path = _write_checkpoint(tmp_path, env={"id": "CartPole-v1"}, n_obs=4, n_actions=2)
+    with pytest.raises(ValueError, match="aero_gym scenario"):
+        cli.main(["eval", str(path), "--flightgear"])
 
 
 def test_an_unknown_subcommand_exits_nonzero():

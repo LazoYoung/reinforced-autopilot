@@ -206,6 +206,14 @@ class TrainConfig:
                 f"total_steps ({self.total_steps}) is at or below the replay warmup "
                 f"threshold ({warmup}); the run would never take a gradient step"
             )
+        envs = self.rollout.n_workers * self.rollout.envs_per_worker
+        if self.env.render_mode == "flightgear" and envs > 1:
+            raise ValueError(
+                f"env.render_mode 'flightgear' needs exactly one environment in "
+                f"total, but rollout.n_workers ({self.rollout.n_workers}) * "
+                f"envs_per_worker ({self.rollout.envs_per_worker}) is {envs}; "
+                "FlightGear is one viewer showing one aircraft"
+            )
 
 
 def _build(cls: type, data: dict[str, Any], path: str | None):

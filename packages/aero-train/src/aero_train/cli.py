@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import shutil
 import sys
@@ -69,15 +70,17 @@ def cmd_resume(args: argparse.Namespace) -> int:
 def cmd_eval(args: argparse.Namespace) -> int:
     payload = load_checkpoint(Path(args.checkpoint))
     cfg = config_from_dict(payload["config"])
+    env_cfg = cfg.env
     if args.flightgear:
-        # eval is the only path that will touch FlightGear, and it is single-env
-        # and local by construction -- one viewer, one aircraft. The flag is
-        # accepted now and wired up in Phase 2, when EnvConfig gains a render
-        # mode and aero_gym scenarios become loadable.
-        raise NotImplementedError(
-            "--flightgear needs the aero_gym env branch, which arrives in Phase 2"
-        )
-    env_fn = make_env_fn(cfg.env)
+        if env_cfg.scenario is None:
+            raise ValueError(
+                "--flightgear needs an aero_gym scenario env; this checkpoint was "
+                f"trained on Gymnasium env {env_cfg.id!r}, which has no viewer"
+            )
+        # eval is the only path that touches FlightGear, and it is single-env and
+        # local by construction -- one viewer, one aircraft.
+        env_cfg = dataclasses.replace(env_cfg, render_mode="flightgear")
+    env_fn = make_env_fn(env_cfg)
     obs_space, act_space = _spaces(env_fn)
     algo = build_algorithm(cfg, obs_space, act_space)
     algo.load_state_dict(payload["algo"])

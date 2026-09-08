@@ -34,7 +34,18 @@ CONFIG = {
 }
 
 
-def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path):
+def _assert_eval_report_printed(out: str) -> None:
+    # Component tests already cover the report's structure; this is the
+    # end-to-end test, and an exit code alone is the weakest possible evidence
+    # that cmd_eval did real work -- a degenerate report (or none at all) that
+    # never raises would still return 0. Mirrors the substring checks
+    # test_eval_reports_a_mean_return uses in test_cli.py.
+    assert "mean return" in out
+    assert "length" in out
+    assert "terminated" in out
+
+
+def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
     config = dict(CONFIG)
     config["checkpoint"] = {
         "dir": str(tmp_path / "checkpoints"),
@@ -58,10 +69,33 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path):
     assert second["frames"] > first["frames"]
     assert second["config"]["env"]["scenario"] == "steady_flight"
 
+    # `frames` cannot distinguish a real resume from a silent restart: whether
+    # cmd_resume seeds Trainer.frames from the checkpoint (512-ish) or leaves it
+    # at Trainer.__init__'s default of 0, the run loop is `while frames <
+    # total_steps`, so *both* paths stop as soon as frames crosses the same
+    # 1024 ceiling -- no choice of total_steps changes that, since it's the
+    # very thing both paths converge on. global_step does distinguish them: with
+    # updates_per_iter=1 and include_buffer=True (the buffer is already past
+    # warmup_frames the moment it's reloaded), every iteration during resume
+    # takes exactly one gradient step regardless of which path is taken, so
+    # global_step's delta equals the iteration count each path actually runs --
+    # and a genuine resume, starting already past the halfway point, runs about
+    # half as many new iterations as a restart from zero would. 10 is this run's
+    # exact, deterministic (fixed seed, CPU-only) iteration count; a restart
+    # measures 20 on this same config (see the mutation report and this task's
+    # fix-round report for both numbers, and the demonstration that deleting
+    # `trainer.frames = frames` in cmd_resume turns this line red).
+    assert second["global_step"] - first["global_step"] == 10, (
+        "resume did not continue from the saved global_step -- frames alone "
+        "can't tell a real resume from a restart, since both converge on the "
+        "same total_steps ceiling"
+    )
+
     assert cli.main(["eval", str(latest), "--episodes", "2"]) == 0
+    _assert_eval_report_printed(capsys.readouterr().out)
 
 
-def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path):
+def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path, capsys):
     config = dict(CONFIG)
     config["checkpoint"] = {
         "dir": str(tmp_path / "checkpoints"),
@@ -76,3 +110,4 @@ def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path):
     best = tmp_path / "checkpoints" / "best.pt"
     assert best.exists()
     assert cli.main(["eval", str(best), "--episodes", "1"]) == 0
+    _assert_eval_report_printed(capsys.readouterr().out)

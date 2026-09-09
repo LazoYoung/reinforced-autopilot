@@ -329,3 +329,67 @@ def test_mlflow_missing_uvx_returns_nonzero_and_does_not_raise(monkeypatch, caps
     err = capsys.readouterr().err
     assert "uvx" in err
     assert "uv" in err
+
+
+def test_training_with_a_viewer_builds_its_eval_env_without_one(monkeypatch, tmp_path):
+    """Trainer._checkpoint -> evaluate_policy -> eval_env_fn() builds a whole
+    second AeroGymEnv. With the training factory reused, that second env also
+    asks for render_mode='flightgear' and launches a second FlightGear on the
+    same default ports while the training viewer is still alive. The eval env is
+    not the one the user is watching, so it gets no viewer.
+    """
+    render_modes = []
+    captured = {}
+
+    def fake_make_env_fn(env_cfg):
+        render_modes.append(env_cfg.render_mode)
+
+        def _make():
+            return _ScriptedEnv()
+
+        _make.render_mode = env_cfg.render_mode
+        return _make
+
+    class FakeTrainer:
+        def __init__(self, *args, eval_env_fn=None, **kwargs):
+            captured["eval_env_fn"] = eval_env_fn
+            self.frames = 0
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    monkeypatch.setattr(cli, "Trainer", FakeTrainer)
+
+    path = tmp_path / "run.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            run_name: viewer
+            seed: 0
+            total_steps: 64
+            env:
+              scenario: steady_flight
+              render_mode: flightgear
+            algo:
+              type: dqn
+              hidden_sizes: [8]
+              buffer_size: 200
+              warmup_frames: 16
+              batch_size: 8
+            rollout:
+              engine: local
+              n_workers: 1
+              envs_per_worker: 1
+              frames_per_iter: 8
+            tracking:
+              enabled: false
+            checkpoint:
+              dir: {ckpt}
+            """
+        ).format(ckpt=tmp_path / "ckpt")
+    )
+
+    assert cli.main(["run", str(path)]) == 0
+    assert "flightgear" in render_modes, "the training env must keep its viewer"
+    assert captured["eval_env_fn"].render_mode is None

@@ -31,6 +31,15 @@ def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
 
 def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     env_fn = make_env_fn(cfg.env)
+    # A separate factory with the viewer stripped, not env_fn reused: eval
+    # builds its own env, and with render_mode carried over that env launches a
+    # second FlightGear on the same default ports while the training viewer is
+    # still alive. The eval env is not the one the user is watching.
+    eval_env_fn = (
+        env_fn
+        if cfg.env.render_mode is None
+        else make_env_fn(dataclasses.replace(cfg.env, render_mode=None))
+    )
     obs_space, act_space = _spaces(env_fn)
     algo = build_algorithm(cfg, obs_space, act_space)
     frames = 0
@@ -48,7 +57,7 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     engine = build_engine(cfg.rollout, env_fn, algo.make_agent(), cfg.seed)
     tracker = build_tracker(cfg)
     checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint, best_return=best_return)
-    trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=env_fn)
+    trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=eval_env_fn)
     trainer.frames = frames
     trainer.run()
     return 0

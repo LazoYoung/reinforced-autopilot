@@ -492,3 +492,42 @@ def test_two_episodes_from_the_same_seed_start_identically():
         np.testing.assert_allclose(third, first, atol=1e-6)
     finally:
         env.close()
+
+
+def test_reset_reuses_the_fdm_while_output_is_configured():
+    """Discarding the FDM re-applies the FlightGear output directive, which
+    rewrites a temp file and restarts the UDP stream. Neither belongs in the
+    middle of a session that is streaming to an already-running FlightGear
+    (`launch_flightgear=False`), so that path keeps its FDM -- determinism is
+    a training concern and nothing is training while you are watching.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    sim = JSBSimSimulator()
+    try:
+        sim.enable_visualization(port=5599, launch_flightgear=False)
+        sim.reset(scenario)
+        first = sim._fdm
+        sim.reset(scenario)
+        assert sim._fdm is first, "the streaming path must not rebuild the FDM"
+    finally:
+        sim.close()
+
+
+def test_reapplying_the_output_directive_does_not_orphan_the_previous_one():
+    """_apply_output_directive writes a NamedTemporaryFile with delete=False and
+    close() only unlinks the last one, so every rebuild used to strand a file.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    sim = JSBSimSimulator()
+    try:
+        sim.enable_visualization(port=5599, launch_flightgear=False)
+        sim.reset(scenario)
+        stale = sim._directive_path
+        assert stale is not None and stale.exists()
+        # Re-applying is what a rebuild does; enable_visualization takes the
+        # same path once an FDM exists.
+        sim.enable_visualization(port=5600, launch_flightgear=False)
+        assert sim._directive_path != stale
+        assert not stale.exists(), f"orphaned {stale}"
+    finally:
+        sim.close()

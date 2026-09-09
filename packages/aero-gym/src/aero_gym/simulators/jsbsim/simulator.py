@@ -60,7 +60,7 @@ class JSBSimSimulator(Simulator):
                 lon_deg=ic.longitude_deg,
                 heading_deg=ic.heading_deg,
             )
-        if self._viewer is None:
+        if self._viewer is None and self._visualization is None:
             # run_ic() restores the flight condition but not the whole model:
             # engine state (rpm, manifold pressure, thrust) carries across it,
             # so two episodes from the same seed diverge even with identical
@@ -73,10 +73,21 @@ class JSBSimSimulator(Simulator):
             # Not done while a viewer is attached: CockpitSync captures the FDM
             # once (guarded by _viewer_synced) and _ensure_fdm rewrites the
             # FlightGear output directive on every build, so rebuilding under a
-            # live cockpit would leave the sync bound to a dead FDM and leak a
-            # temp directive per episode. Visualization is an interactive path
-            # where episode-to-episode determinism buys nothing; the control
-            # clear below is what keeps that path honest.
+            # live cockpit would leave the sync bound to a dead FDM.
+            #
+            # `_visualization` is checked as well as `_viewer`, because output
+            # can be configured without one: enable_visualization(
+            # launch_flightgear=False) streams to an already-running FlightGear,
+            # and close() clears the viewer but keeps the output settings. Every
+            # rebuild re-applies the output directive, which restarts the UDP
+            # stream mid-session and writes a fresh temp file.
+            #
+            # Visualization is an interactive path where episode-to-episode
+            # determinism buys nothing; the control clear below is what keeps
+            # that path honest. Note this makes reset determinism a function of
+            # render_mode -- a *training* run configured with a viewer is not
+            # reproducible. Eval is unaffected: cli._train strips render_mode
+            # from the eval env factory.
             self._fdm = None
         fdm = self._ensure_fdm(scenario.aircraft)
         fdm["ic/lat-geod-deg"] = ic.latitude_deg
@@ -262,6 +273,12 @@ class JSBSimSimulator(Simulator):
 
     def _apply_output_directive(self) -> None:
         assert self._visualization is not None
+        # close() unlinks only the newest path, so without this every re-apply
+        # -- a rebuild for a different aircraft, or another
+        # enable_visualization -- would strand its predecessor in the temp dir.
+        if self._directive_path is not None:
+            self._directive_path.unlink(missing_ok=True)
+            self._directive_path = None
         content = _OUTPUT_DIRECTIVE.format(**self._visualization)
         with tempfile.NamedTemporaryFile(
             "w", suffix=".xml", prefix="aero_gym_fg_", delete=False

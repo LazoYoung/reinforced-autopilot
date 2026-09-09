@@ -80,12 +80,21 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
     # takes exactly one gradient step regardless of which path is taken, so
     # global_step's delta equals the iteration count each path actually runs --
     # and a genuine resume, starting already past the halfway point, runs about
-    # half as many new iterations as a restart from zero would. 10 is this run's
+    # half as many new iterations as a restart from zero would. 9 is this run's
     # exact, deterministic (fixed seed, CPU-only) iteration count; a restart
-    # measures 20 on this same config (see the mutation report and this task's
+    # measures 19 on this same config (see the mutation report and this task's
     # fix-round report for both numbers, and the demonstration that deleting
     # `trainer.frames = frames` in cmd_resume turns this line red).
-    assert second["global_step"] - first["global_step"] == 10, (
+    #
+    # The constant is a function of this scenario's flight dynamics, not just of
+    # the config: iterations are counted in frames, autoreset rows are masked out
+    # of the frame count, so longer episodes mean fewer wasted rows and fewer
+    # iterations to reach total_steps. It moved from 10 to 9 when the action seed
+    # started reading control commands instead of positions and the aircraft
+    # stopped sinking out of the band in eight steps. A change here is a signal
+    # to re-measure the dynamics, not evidence of a resume regression -- the way
+    # to tell them apart is that a restart still measures roughly twice this.
+    assert second["global_step"] - first["global_step"] == 9, (
         "resume did not continue from the saved global_step -- frames alone "
         "can't tell a real resume from a restart, since both converge on the "
         "same total_steps ceiling"

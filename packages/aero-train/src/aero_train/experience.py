@@ -61,7 +61,16 @@ class ExperienceSource:
             valid[t] = live
             rewards[t] = np.where(live, reward, 0.0)
             terminated[t] = term & live
-            truncated[t] = trunc & live
+            # Terminated dominates. A step can arrive with both flags set --
+            # AeroGymEnv computes them independently, so leaving the reward
+            # band on the same step that hits max_episode_steps sets both, and
+            # gymnasium's TimeLimit ORs truncated onto a terminating step
+            # identically -- and Segment rightly rejects that combination.
+            # Recording it as truncated would tell the learner to bootstrap
+            # past a genuinely terminal state, so the terminal flag wins.
+            # Normalized here rather than in the env because no env-level fix
+            # would reach TimeLimit.
+            truncated[t] = trunc & live & ~term
             self._record_episodes(reward, term, trunc, live, episodes)
             self._obs = np.asarray(next_obs, np.float32)
 

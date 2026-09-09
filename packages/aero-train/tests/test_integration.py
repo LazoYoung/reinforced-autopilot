@@ -103,7 +103,7 @@ def test_dqn_solves_cartpole(tmp_path):
     Vanilla DQN on CartPole finds a high-return policy and then does not hold
     it -- that is why CheckpointManager retains a best-by-eval-return
     checkpoint alongside the latest one, and it is why the real workflow is
-    `autopilot run` followed by `autopilot eval <best checkpoint>`. Asserting
+    `autopilot train` followed by `autopilot eval <best checkpoint>`. Asserting
     on the final learner would test "vanilla DQN converges stably on CartPole
     on a single seed," which is false and not this test's claim. The claim is
     that the best checkpoint the run produces, reloaded through the exact same
@@ -143,7 +143,7 @@ def test_dqn_solves_cartpole(tmp_path):
     tracker = RecordingTracker()
     # cfg.checkpoint.dir, not a second tmp_path: the directory is stated once,
     # here, and CheckpointManager reads it back out of the same cfg it was
-    # given -- exactly how cmd_run wires it in cli.py
+    # given -- exactly how cmd_train wires it in cli.py
     checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint)
     Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=env_fn).run()
 

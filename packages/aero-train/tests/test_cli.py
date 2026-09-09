@@ -46,12 +46,12 @@ def config_path(tmp_path):
 
 
 def test_run_trains_and_exits_zero(config_path, tmp_path):
-    assert cli.main(["run", str(config_path)]) == 0
+    assert cli.main(["train", str(config_path)]) == 0
     assert (tmp_path / "ckpt" / "latest.pt").exists()
 
 
 def test_override_is_applied(config_path, tmp_path):
-    cli.main(["run", str(config_path), "--override", "run_name=overridden"])
+    cli.main(["train", str(config_path), "--override", "run_name=overridden"])
     assert load_checkpoint(tmp_path / "ckpt" / "latest.pt")["config"]["run_name"] == "overridden"
 
 
@@ -61,18 +61,18 @@ def test_override_accepts_bare_exponent_learning_rate(config_path, tmp_path):
     # grammar requires a decimal point before the exponent), raising a bare
     # "'<=' not supported between instances of 'str' and 'int'" from
     # __post_init__ instead of building a working config.
-    cli.main(["run", str(config_path), "--override", "algo.lr=1e-3"])
+    cli.main(["train", str(config_path), "--override", "algo.lr=1e-3"])
     cfg = load_checkpoint(tmp_path / "ckpt" / "latest.pt")["config"]
     assert cfg["algo"]["lr"] == pytest.approx(0.001)
 
 
 def test_override_cannot_bypass_validation(config_path):
     with pytest.raises(ValueError, match="frames_per_iter"):
-        cli.main(["run", str(config_path), "--override", "rollout.frames_per_iter=17"])
+        cli.main(["train", str(config_path), "--override", "rollout.frames_per_iter=17"])
 
 
 def test_resume_continues_from_the_saved_global_step(config_path, tmp_path):
-    cli.main(["run", str(config_path)])
+    cli.main(["train", str(config_path)])
     ckpt = tmp_path / "ckpt" / "latest.pt"
     before = load_checkpoint(ckpt)["global_step"]
     assert cli.main(["resume", str(ckpt), "--total-steps", "128"]) == 0
@@ -80,7 +80,7 @@ def test_resume_continues_from_the_saved_global_step(config_path, tmp_path):
 
 
 def test_resume_extends_the_frame_budget(config_path, tmp_path):
-    cli.main(["run", str(config_path)])
+    cli.main(["train", str(config_path)])
     ckpt = tmp_path / "ckpt" / "latest.pt"
     cli.main(["resume", str(ckpt), "--total-steps", "128"])
     payload = load_checkpoint(ckpt)
@@ -91,8 +91,8 @@ def test_resume_extends_the_frame_budget(config_path, tmp_path):
 def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
     # This config's eval_interval_iters (100) never fires within 4 iterations,
     # so plant a best_return as if an earlier eval already had -- exactly what
-    # a real `autopilot run` that found a good policy leaves behind.
-    cli.main(["run", str(config_path)])
+    # a real `autopilot train` that found a good policy leaves behind.
+    cli.main(["train", str(config_path)])
     ckpt = tmp_path / "ckpt" / "latest.pt"
     payload = load_checkpoint(ckpt)
     payload["best_return"] = 500.0
@@ -108,7 +108,7 @@ def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
 
 
 def test_eval_reports_a_mean_return(config_path, tmp_path, capsys):
-    cli.main(["run", str(config_path)])
+    cli.main(["train", str(config_path)])
     assert cli.main(["eval", str(tmp_path / "ckpt" / "latest.pt"), "--episodes", "2"]) == 0
     out = capsys.readouterr().out
     # "mean return" alone doesn't prove the length/terminated portions of the
@@ -121,7 +121,14 @@ def test_eval_reports_a_mean_return(config_path, tmp_path, capsys):
 
 def test_flightgear_is_only_offered_on_eval(config_path):
     with pytest.raises(SystemExit):
-        cli.main(["run", str(config_path), "--flightgear"])
+        cli.main(["train", str(config_path), "--flightgear"])
+
+
+def test_training_subcommand_is_train_not_run(config_path):
+    """`run` said nothing about what it did, next to `resume` and `eval`."""
+    assert cli.main(["train", str(config_path)]) == 0
+    with pytest.raises(SystemExit):
+        cli.main(["run", str(config_path)])
 
 
 class _ScriptedEnv(gym.Env):
@@ -390,6 +397,6 @@ def test_training_with_a_viewer_builds_its_eval_env_without_one(monkeypatch, tmp
         ).format(ckpt=tmp_path / "ckpt")
     )
 
-    assert cli.main(["run", str(path)]) == 0
+    assert cli.main(["train", str(path)]) == 0
     assert "flightgear" in render_modes, "the training env must keep its viewer"
     assert captured["eval_env_fn"].render_mode is None

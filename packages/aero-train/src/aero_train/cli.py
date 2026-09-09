@@ -63,7 +63,7 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     return 0
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def cmd_train(args: argparse.Namespace) -> int:
     return _train(load_config(args.config, args.override))
 
 
@@ -159,16 +159,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autopilot")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="train from a YAML run config")
-    run.add_argument("config")
-    run.add_argument(
+    train = sub.add_parser("train", help="train from a YAML run config")
+    train.add_argument("config")
+    train.add_argument(
         "--override",
         action="append",
         default=[],
         metavar="PATH=VALUE",
         help="dotted override, e.g. rollout.n_workers=4; applied before validation",
     )
-    run.set_defaults(func=cmd_run)
+    train.set_defaults(func=cmd_train)
 
     resume = sub.add_parser("resume", help="continue training from a checkpoint")
     resume.add_argument("checkpoint")

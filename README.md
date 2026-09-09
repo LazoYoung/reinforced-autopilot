@@ -30,7 +30,7 @@ needed for visualization — [install it separately](https://www.flightgear.org/
 ## Quick start: train something
 
 ```sh
-uv run autopilot run configs/dqn_cartpole.yaml
+uv run autopilot train configs/dqn_cartpole.yaml
 ```
 
 That trains DQN on CartPole-v1 — the end-to-end proof that the stack learns, and the
@@ -40,7 +40,7 @@ fastest way to check an install works. Checkpoints land under `runs/`, metrics u
 ```sh
 # override any config key without editing the file; applied before validation,
 # so an override can't slip past a config check
-uv run autopilot run configs/dqn_cartpole.yaml --override algo.lr=1e-3
+uv run autopilot train configs/dqn_cartpole.yaml --override algo.lr=1e-3
 
 # extend a finished run past its original budget
 uv run autopilot resume runs/dqn-cartpole/checkpoints/latest.pt --total-steps 120000

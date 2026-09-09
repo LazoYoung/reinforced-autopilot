@@ -57,7 +57,7 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
     path = tmp_path / "run.yaml"
     path.write_text(yaml.safe_dump(config))
 
-    assert cli.main(["run", str(path)]) == 0
+    assert cli.main(["train", str(path)]) == 0
     latest = tmp_path / "checkpoints" / "latest.pt"
     assert latest.exists(), "the final iteration was not checkpointed"
     first = load_checkpoint(latest)
@@ -115,7 +115,7 @@ def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path, c
     }
     path = tmp_path / "run.yaml"
     path.write_text(yaml.safe_dump(config))
-    assert cli.main(["run", str(path)]) == 0
+    assert cli.main(["train", str(path)]) == 0
 
     best = tmp_path / "checkpoints" / "best.pt"
     assert best.exists()

@@ -10,7 +10,7 @@ import numpy as np
 
 from .scenario import Scenario, Transition
 from .simulator import Simulator
-from .variables import ACTION_POSITION, ACTION_SPECS, FlightVariable
+from .variables import ACTION_SPECS, FlightVariable
 
 
 class AeroGymEnv(gym.Env):
@@ -100,16 +100,24 @@ class AeroGymEnv(gym.Env):
         zero would chop the throttle to idle on the very first step, undoing the
         flyable state the aircraft profile exists to establish.
 
-        Meaningful only after reset(), and only because the simulator settles
-        the FCS there -- before that the positions have not been computed.
+        Meaningful only after reset(), which is where the aircraft profile
+        applies its startup commands.
+
+        Reads control *commands*, not control positions, and the distinction is
+        the whole point: on a trimmed aircraft the position is command plus
+        trim (the c172p resets with elevator-cmd 0.0, pitch-trim 0.2 and so
+        elevator-pos ~0.2), and an action is a command. Seeding the accumulator
+        from the position would hand that trim back to set_control, which JSBSim
+        then adds to trim a second time -- measured as a 1200 fpm sink and an
+        8-step episode under a do-nothing policy. Observing *position* remains
+        the right choice for observations (see docs/adr/0003); this is the
+        action seed, which is a different question with the opposite answer.
         """
-        # Indexed directly, not .get()/fallback: a future action variable with
-        # no position entry should raise KeyError naming it, the same
-        # fail-loud choice observe() makes for a missing property, rather than
-        # silently seeding DeltaAction's accumulator with a wrong 0.0.
-        values = [
-            self.simulator.observe(ACTION_POSITION[var]) for var in self.scenario.action_variables
-        ]
+        # get_control, indexed directly by the backend: a future action
+        # variable with no control mapping should raise KeyError naming it, the
+        # same fail-loud choice observe() makes for a missing property, rather
+        # than silently seeding DeltaAction's accumulator with a wrong 0.0.
+        values = [self.simulator.get_control(var) for var in self.scenario.action_variables]
         return np.clip(
             np.array(values, np.float32), self.action_space.low, self.action_space.high
         )

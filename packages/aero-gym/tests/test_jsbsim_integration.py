@@ -360,18 +360,30 @@ def test_the_first_observation_of_an_episode_is_not_stale():
 
 
 def test_initial_action_describes_the_aircrafts_startup_state():
+    """Every axis, not just throttle: throttle is the one axis where command
+    and position coincide (it has no trim term), so a throttle-only assertion
+    passes just as happily on a seed read from the wrong property."""
     from aero_gym.simulators.jsbsim.aircraft import profile_for
+    from aero_gym.simulators.jsbsim.properties import CONTROL_MAP
 
     scenario = make_steady_flight_scenario(max_episode_steps=None)
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     try:
         env.reset(seed=0)
         action = env.initial_action()
-        throttle_index = scenario.action_variables.index(V.THROTTLE)
-        commanded = profile_for("c172p").startup["fcs/throttle-cmd-norm"]
         assert action.shape == env.action_space.shape
-        assert action[throttle_index] == pytest.approx(commanded, abs=1e-2)
         assert env.action_space.contains(action)
+        startup = profile_for("c172p").startup
+        for index, var in enumerate(scenario.action_variables):
+            mapping = CONTROL_MAP[var]
+            # Whatever the profile commanded at startup, in canonical sign;
+            # a property the profile never writes is still at JSBSim's 0.0.
+            expected = mapping.sign * startup.get(mapping.prop, 0.0)
+            assert action[index] == pytest.approx(expected, abs=1e-2), var.name
+        # ELEVATOR is the axis that discriminates: the profile leaves its
+        # command at 0.0 while trimming to a ~0.2 elevator *position*.
+        elevator_index = scenario.action_variables.index(V.ELEVATOR)
+        assert action[elevator_index] == pytest.approx(0.0, abs=1e-2)
     finally:
         env.close()
 
@@ -386,3 +398,44 @@ def test_elevator_position_follows_the_commanded_sign(env):
     for _ in range(3):
         _, _, _, _, info = env.step(np.array([0.5, 0.0, 0.0, 0.7], np.float32))
     assert info["obs"][V.ELEVATOR_POS] > baseline
+
+
+def test_get_control_round_trips_every_axis(env):
+    """get_control is the documented inverse of set_control.
+
+    All four axes, because elevator and rudder are the ones whose canonical
+    sign is the negation of JSBSim's: a get_control that forgot the sign would
+    still pass on aileron and throttle alone.
+    """
+    env.reset(seed=0)
+    sim = env.simulator
+    for var, value in (
+        (V.ELEVATOR, 0.35),
+        (V.ELEVATOR, -0.42),
+        (V.AILERON, 0.25),
+        (V.RUDDER, 0.15),
+        (V.RUDDER, -0.6),
+        (V.THROTTLE, 0.8),
+    ):
+        sim.set_control(var, value)
+        assert sim.get_control(var) == pytest.approx(value, abs=1e-6), var.name
+
+
+def test_initial_action_seeds_the_elevator_command_not_its_position():
+    """The c172p trims with fcs/pitch-trim-cmd-norm = 0.2, so its elevator
+    *position* after reset is ~0.2 while its elevator *command* is 0.0. Seeding
+    DeltaAction's accumulator from the position feeds that trim back in as a
+    command and JSBSim adds trim a second time.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        env.reset(seed=0)
+        elevator_index = scenario.action_variables.index(V.ELEVATOR)
+        position = env.simulator.observe(V.ELEVATOR_POS)
+        # Guard the premise: if the profile ever stops trimming, this test
+        # would pass for the wrong reason.
+        assert abs(position) > 0.1, "the c172p is expected to reset out of trim-neutral"
+        assert env.initial_action()[elevator_index] == pytest.approx(0.0, abs=1e-6)
+    finally:
+        env.close()

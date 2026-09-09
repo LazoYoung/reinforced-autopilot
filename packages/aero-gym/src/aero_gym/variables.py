@@ -89,7 +89,9 @@ ACTION_POSITION: dict[FlightVariable, FlightVariable] = {
 }
 """The observation that reports where each commanded control actually is.
 
-`AeroGymEnv.initial_action` uses it to describe the aircraft's post-reset
-control state as an action, which is what DeltaAction seeds its accumulator
-from.
+Scenarios use it to observe control positions, which is what keeps the problem
+Markov for DeltaAction (see docs/adr/0003). Deliberately *not* what
+`AeroGymEnv.initial_action` seeds DeltaAction's accumulator from: a position is
+command plus trim, an action is a command, and the seed reads
+`Simulator.get_control` instead.
 """

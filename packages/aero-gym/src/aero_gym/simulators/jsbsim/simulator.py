@@ -132,6 +132,18 @@ class JSBSimSimulator(Simulator):
         else:
             fdm[mapping.prop] = value
 
+    def get_control(self, var: FlightVariable) -> float:
+        """Read back what set_control last wrote, undoing its sign.
+
+        Same property and same sign as set_control, including the per-engine
+        indexing: engine 0 is read back because the agent commands every engine
+        identically, so it is representative of what was written.
+        """
+        mapping = CONTROL_MAP[var]
+        fdm = self._require_fdm()
+        prop = f"{mapping.prop}[0]" if mapping.per_engine else mapping.prop
+        return mapping.sign * float(fdm[prop])
+
     def run(self) -> None:
         fdm = self._require_fdm()
         fdm.run()

@@ -60,6 +60,24 @@ class JSBSimSimulator(Simulator):
                 lon_deg=ic.longitude_deg,
                 heading_deg=ic.heading_deg,
             )
+        if self._viewer is None:
+            # run_ic() restores the flight condition but not the whole model:
+            # engine state (rpm, manifold pressure, thrust) carries across it,
+            # so two episodes from the same seed diverge even with identical
+            # controls. Measured on the c172p: back-to-back resets differ by
+            # 1.56 in the observation vector, and a do-nothing episode 2 sees a
+            # pitch rate of +1.37 deg/s where episode 1 saw -0.54. Discarding
+            # the FDM makes them bit-identical, and costs ~1.1 ms per episode
+            # (0.1 -> 1.2 ms) -- a few seconds across a full training run.
+            #
+            # Not done while a viewer is attached: CockpitSync captures the FDM
+            # once (guarded by _viewer_synced) and _ensure_fdm rewrites the
+            # FlightGear output directive on every build, so rebuilding under a
+            # live cockpit would leave the sync bound to a dead FDM and leak a
+            # temp directive per episode. Visualization is an interactive path
+            # where episode-to-episode determinism buys nothing; the control
+            # clear below is what keeps that path honest.
+            self._fdm = None
         fdm = self._ensure_fdm(scenario.aircraft)
         fdm["ic/lat-geod-deg"] = ic.latitude_deg
         fdm["ic/long-gc-deg"] = ic.longitude_deg
@@ -73,8 +91,18 @@ class JSBSimSimulator(Simulator):
         fdm["ic/r-rad_sec"] = 0.0
         if not fdm.run_ic():
             raise SimulatorError("JSBSim failed to initialize the requested flight condition")
+        # run_ic() leaves the FCS command properties alone, so whenever the FDM
+        # is reused -- the viewer path above -- episode N+1 would start holding
+        # whatever stick and rudder episode N ended on, and the aircraft would
+        # visibly jerk at the start of every episode. Redundant after a rebuild
+        # (a fresh FDM commands nothing) and cheap, so it runs unconditionally.
+        # Written through set_control so the properties cleared are exactly the
+        # ones the agent can write, per-engine throttles included.
+        for var in CONTROL_MAP:
+            self.set_control(var, 0.0)
         # Start with the engine(s) running and the aircraft's own controls set,
-        # so it is flyable from the first step.
+        # so it is flyable from the first step. After the clear above, so the
+        # profile's commands win.
         fdm["propulsion/set-running"] = -1
         for prop, value in profile.startup.items():
             fdm[prop] = value

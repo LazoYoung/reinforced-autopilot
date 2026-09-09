@@ -439,3 +439,56 @@ def test_initial_action_seeds_the_elevator_command_not_its_position():
         assert env.initial_action()[elevator_index] == pytest.approx(0.0, abs=1e-6)
     finally:
         env.close()
+
+
+def test_reset_clears_controls_when_the_fdm_is_reused():
+    """The viewer path keeps its FDM across episodes, so run_ic() alone would
+    leave episode N+1 holding whatever stick and rudder episode N ended on --
+    a visible jerk at the start of every episode.
+
+    A viewer is attached because that is what suppresses the FDM rebuild, and
+    the rebuild is the only other thing that zeroes the commands: without one,
+    this test would pass against a reset that clears nothing.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    sim = JSBSimSimulator()
+    sim._viewer = _StubViewer(aircraft="c172p")
+    try:
+        sim.reset(scenario)
+        fresh = {var: sim.get_control(var) for var in scenario.action_variables}
+        assert any(abs(v) > 0.1 for v in fresh.values()), "expected a non-trivial startup state"
+
+        for var, value in zip(scenario.action_variables, (0.9, -0.7, 0.5, 0.2)):
+            sim.set_control(var, value)
+        for _ in range(20):
+            sim.run()
+
+        sim.reset(scenario)
+        assert sim._fdm is not None, "the viewer path must not rebuild the FDM"
+        for var in scenario.action_variables:
+            assert sim.get_control(var) == pytest.approx(fresh[var], abs=1e-6), var.name
+    finally:
+        sim.close()
+
+
+def test_two_episodes_from_the_same_seed_start_identically():
+    """JSBSim's run_ic() restores the flight condition but not engine state, so
+    without discarding the FDM a seeded run is not reproducible past its first
+    episode and the episodes are not independent draws.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        first, _ = env.reset(seed=0)
+        # Fly episode 1 well away from the trimmed condition.
+        for _ in range(20):
+            env.step(np.array([0.9, -0.7, 0.5, 0.2], np.float32))
+        second, _ = env.reset(seed=0)
+        np.testing.assert_allclose(second, first, atol=1e-6)
+
+        # Back-to-back, with no flying in between: this is the one engine state
+        # alone breaks, and it fails by 1.56 without the rebuild.
+        third, _ = env.reset(seed=0)
+        np.testing.assert_allclose(third, first, atol=1e-6)
+    finally:
+        env.close()

@@ -207,3 +207,41 @@ class EpsilonGreedySelector(ActionSelector):
         if n_explore:
             actions[explore] = self.rng.integers(0, n_actions, size=n_explore)
         return actions
+
+
+class _WeightlessAgent(Agent):
+    """Shared base for agents with no network behind them."""
+
+    def sync_weights(self, actor_state_dict: dict[str, np.ndarray]) -> None:
+        # Nothing to load. The payload arrives -- carrying selector.epsilon --
+        # only because evaluate_policy and RolloutEngine speak one protocol to
+        # every algorithm. Ignoring a key is normally the failure mode this
+        # codebase rejects; here there is genuinely no state to put it in.
+        return
+
+
+class RandomAgent(_WeightlessAgent):
+    """Uniform over a Discrete action space. The exploration floor."""
+
+    def __init__(self, n_actions: int, rng: np.random.Generator | None = None) -> None:
+        self.n_actions = int(n_actions)
+        self.rng = rng if rng is not None else np.random.default_rng()
+
+    def __call__(
+        self, obs: np.ndarray, agent_state: Any | None = None
+    ) -> tuple[np.ndarray, Any | None]:
+        actions = self.rng.integers(0, self.n_actions, size=len(obs))
+        return actions.astype(np.int64), agent_state
+
+
+class ConstantAgent(_WeightlessAgent):
+    """The same action every step. Under DeltaAction's null action, that is a
+    do-nothing pilot holding whatever the aircraft started trimmed for."""
+
+    def __init__(self, action: int) -> None:
+        self.action = int(action)
+
+    def __call__(
+        self, obs: np.ndarray, agent_state: Any | None = None
+    ) -> tuple[np.ndarray, Any | None]:
+        return np.full(len(obs), self.action, np.int64), agent_state

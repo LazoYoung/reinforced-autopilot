@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -29,19 +31,29 @@ def test_reset_honours_initial_conditions(env):
     assert abs(obs[V.ROLL]) < 1.0
 
 
-def test_trimmed_flight_stays_in_envelope(env):
+def test_trimmed_flight_stays_in_the_envelope(env):
+    """Not a claim that a fixed action holds the band -- it does not, by design.
+    What must hold is that the observation contract survives real flight: each
+    feature's pre-clip value stays within the bound its Box entry declares.
+
+    Not `env.observation_space.contains(obs_arr)` -- `_to_array` clips to
+    those same bounds before returning (env.py:126-127), so containment holds
+    by construction and could only ever catch a NaN, a shape mismatch, or a
+    dtype problem, never a real excursion outside the declared range.
+    """
     env.reset(seed=0)
-    action = np.array([0.05, 0.0, 0.0, 0.7], np.float32)  # elevator, aileron, rudder, throttle
-    terminated = False
-    for _ in range(100):  # 10 seconds at 10 Hz
-        obs_arr, reward, terminated, truncated, info = env.step(action)
-        assert env.observation_space.contains(obs_arr)
+    action = np.array([0.05, 0.0, 0.0, 0.7], np.float32)
+    for _ in range(60):
+        _, reward, terminated, truncated, info = env.step(action)
         assert np.isfinite(reward)
+        for feature in env.scenario.observation_features:
+            value = feature.fn(info["obs"])
+            assert feature.spec.low <= value <= feature.spec.high, (
+                f"{feature.name}={value} outside [{feature.spec.low}, {feature.spec.high}]"
+            )
         if terminated:
             break
-    obs = info["obs"]
-    assert not terminated, f"left the flight envelope: {obs}"
-    assert obs[V.ALTITUDE] > 4000.0
+    assert info["obs"][V.ALTITUDE] > 4000.0
 
 
 def test_controls_have_canonical_sign(env):
@@ -60,9 +72,13 @@ def test_controls_have_canonical_sign(env):
 
 
 def test_observations_cover_all_variables(env):
-    _, info = env.reset(seed=0)
-    for var, value in info["obs"].items():
-        spec = OBSERVATION_SPECS[var]
+    """All 15 canonical variables, not just the 12 steady_flight narrows to:
+    query the simulator directly rather than iterating `info["obs"]`, which
+    only carries the scenario's observed subset and would silently drop
+    YAW, YAW_RATE and AOS from this check without the test's name noticing."""
+    env.reset(seed=0)
+    for var, spec in OBSERVATION_SPECS.items():
+        value = env.simulator.observe(var)
         assert spec.low <= value <= spec.high, f"{var} out of declared bounds: {value}"
 
 
@@ -228,3 +244,290 @@ def test_both_engines_answer_the_agent_over_a_flight():
         assert fdm["fcs/throttle-pos-norm[1]"] == pytest.approx(0.35, abs=0.01)
     finally:
         env.close()
+
+
+def test_every_profile_publishes_its_control_positions():
+    """A missing pos-norm property is an aircraft fact, so it is caught per
+    aircraft -- and so is the surface's sign, because a left/right pair need not
+    both follow the pilot convention and only the FDM can say which one does."""
+    from aero_gym.simulators.jsbsim.aircraft import PROFILES
+    from aero_gym.variables import ACTION_POSITION
+
+    for model in PROFILES:
+        sim = JSBSimSimulator()
+        scenario = make_steady_flight_scenario(aircraft=model, max_episode_steps=None)
+        scenario = dataclasses.replace(
+            scenario, observation_variables=tuple(ACTION_POSITION.values())
+        )
+        try:
+            sim.reset(scenario)
+            for var in ACTION_POSITION.values():
+                assert np.isfinite(sim.observe(var)), f"{model}: {var.name}"
+            for action in (V.ELEVATOR, V.AILERON, V.RUDDER):
+                sim.set_control(action, 0.5)
+            for _ in range(20):  # let the actuators travel
+                sim.run()
+            for action in (V.ELEVATOR, V.AILERON, V.RUDDER):
+                position = ACTION_POSITION[action]
+                deflection = sim.observe(position)
+                assert deflection > 0.0, f"{model}: {position.name} = {deflection}"
+        finally:
+            sim.close()
+
+
+@pytest.mark.parametrize(
+    "convert, expected_sign",
+    [
+        # Identity: the override hands the right surface's raw reading straight
+        # through, and the 737 publishes that as the negation of its left one.
+        # A negative answer is therefore proof the property name came from the
+        # profile and not from OBSERVATION_MAP.
+        (lambda x: x, -1.0),
+        # The realistic escape hatch: an aircraft that exposes only its right
+        # aileron supplies the negation itself, and the canonical roll-right
+        # sign comes back out.
+        (lambda x: -x, 1.0),
+    ],
+)
+def test_a_profile_override_replaces_both_the_property_and_its_sign(
+    monkeypatch, convert, expected_sign
+):
+    """observation_props is the escape hatch for an aircraft whose FCS exposes
+    a different surface, so it has to carry a conversion, not just a name."""
+    from aero_gym.simulators.jsbsim import aircraft, properties
+
+    monkeypatch.setitem(
+        aircraft.PROFILES,
+        "737",
+        dataclasses.replace(
+            aircraft.PROFILES["737"],
+            observation_props={
+                V.AILERON_POS: properties.ObservationMapping(
+                    "fcs/right-aileron-pos-norm", convert
+                )
+            },
+        ),
+    )
+    sim = JSBSimSimulator()
+    try:
+        sim.reset(make_steady_flight_scenario(aircraft="737", max_episode_steps=None))
+        sim.set_control(V.AILERON, 0.5)
+        for _ in range(20):
+            sim.run()
+        assert sim.observe(V.AILERON_POS) == pytest.approx(expected_sign * 0.5, abs=0.01)
+    finally:
+        sim.close()
+
+
+def test_an_unpublished_property_names_the_variable_the_property_and_the_model(
+    monkeypatch,
+):
+    from aero_gym.simulator import SimulatorError
+    from aero_gym.simulators.jsbsim import properties
+
+    sim = JSBSimSimulator()
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    monkeypatch.setitem(
+        properties.OBSERVATION_MAP,
+        V.AOS,
+        properties.ObservationMapping(
+            "fcs/no-such-property", properties.OBSERVATION_MAP[V.AOS].to_canonical
+        ),
+    )
+    try:
+        with pytest.raises(
+            SimulatorError, match=r"AOS.*'fcs/no-such-property'.*'c172p'"
+        ):
+            sim.reset(dataclasses.replace(scenario, observation_variables=(V.AOS,)))
+    finally:
+        sim.close()
+
+
+def test_the_first_observation_of_an_episode_is_not_stale():
+    """fcs/*-pos-norm only updates inside run(), so without a settling step the
+    throttle reads 0.0 while the profile just commanded 0.7."""
+    from aero_gym.simulators.jsbsim.aircraft import profile_for
+    from aero_gym.variables import FlightVariable as V
+
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        _, info = env.reset(seed=0)
+        commanded = profile_for("c172p").startup["fcs/throttle-cmd-norm"]
+        assert info["obs"][V.THROTTLE_POS] == pytest.approx(commanded, abs=1e-2)
+    finally:
+        env.close()
+
+
+def test_initial_action_describes_the_aircrafts_startup_state():
+    """Every axis, not just throttle: throttle is the one axis where command
+    and position coincide (it has no trim term), so a throttle-only assertion
+    passes just as happily on a seed read from the wrong property."""
+    from aero_gym.simulators.jsbsim.aircraft import profile_for
+    from aero_gym.simulators.jsbsim.properties import CONTROL_MAP
+
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        env.reset(seed=0)
+        action = env.initial_action()
+        assert action.shape == env.action_space.shape
+        assert env.action_space.contains(action)
+        startup = profile_for("c172p").startup
+        for index, var in enumerate(scenario.action_variables):
+            mapping = CONTROL_MAP[var]
+            # Whatever the profile commanded at startup, in canonical sign;
+            # a property the profile never writes is still at JSBSim's 0.0.
+            expected = mapping.sign * startup.get(mapping.prop, 0.0)
+            assert action[index] == pytest.approx(expected, abs=1e-2), var.name
+        # ELEVATOR is the axis that discriminates: the profile leaves its
+        # command at 0.0 while trimming to a ~0.2 elevator *position*.
+        elevator_index = scenario.action_variables.index(V.ELEVATOR)
+        assert action[elevator_index] == pytest.approx(0.0, abs=1e-2)
+    finally:
+        env.close()
+
+
+def test_elevator_position_follows_the_commanded_sign(env):
+    """Canonical +elevator is pitch-up, and the observed position must agree --
+    asserted as a movement from the trimmed baseline, not against a constant."""
+    env.reset(seed=0)
+    _, _, _, _, info = env.step(np.array([0.0, 0.0, 0.0, 0.7], np.float32))
+    baseline = info["obs"][V.ELEVATOR_POS]
+    env.reset(seed=0)
+    for _ in range(3):
+        _, _, _, _, info = env.step(np.array([0.5, 0.0, 0.0, 0.7], np.float32))
+    assert info["obs"][V.ELEVATOR_POS] > baseline
+
+
+def test_get_control_round_trips_every_axis(env):
+    """get_control is the documented inverse of set_control.
+
+    All four axes, because elevator and rudder are the ones whose canonical
+    sign is the negation of JSBSim's: a get_control that forgot the sign would
+    still pass on aileron and throttle alone.
+    """
+    env.reset(seed=0)
+    sim = env.simulator
+    for var, value in (
+        (V.ELEVATOR, 0.35),
+        (V.ELEVATOR, -0.42),
+        (V.AILERON, 0.25),
+        (V.RUDDER, 0.15),
+        (V.RUDDER, -0.6),
+        (V.THROTTLE, 0.8),
+    ):
+        sim.set_control(var, value)
+        assert sim.get_control(var) == pytest.approx(value, abs=1e-6), var.name
+
+
+def test_initial_action_seeds_the_elevator_command_not_its_position():
+    """The c172p trims with fcs/pitch-trim-cmd-norm = 0.2, so its elevator
+    *position* after reset is ~0.2 while its elevator *command* is 0.0. Seeding
+    DeltaAction's accumulator from the position feeds that trim back in as a
+    command and JSBSim adds trim a second time.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        env.reset(seed=0)
+        elevator_index = scenario.action_variables.index(V.ELEVATOR)
+        position = env.simulator.observe(V.ELEVATOR_POS)
+        # Guard the premise: if the profile ever stops trimming, this test
+        # would pass for the wrong reason.
+        assert abs(position) > 0.1, "the c172p is expected to reset out of trim-neutral"
+        assert env.initial_action()[elevator_index] == pytest.approx(0.0, abs=1e-6)
+    finally:
+        env.close()
+
+
+def test_reset_clears_controls_when_the_fdm_is_reused():
+    """The viewer path keeps its FDM across episodes, so run_ic() alone would
+    leave episode N+1 holding whatever stick and rudder episode N ended on --
+    a visible jerk at the start of every episode.
+
+    A viewer is attached because that is what suppresses the FDM rebuild, and
+    the rebuild is the only other thing that zeroes the commands: without one,
+    this test would pass against a reset that clears nothing.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    sim = JSBSimSimulator()
+    sim._viewer = _StubViewer(aircraft="c172p")
+    try:
+        sim.reset(scenario)
+        fresh = {var: sim.get_control(var) for var in scenario.action_variables}
+        assert any(abs(v) > 0.1 for v in fresh.values()), "expected a non-trivial startup state"
+
+        for var, value in zip(scenario.action_variables, (0.9, -0.7, 0.5, 0.2)):
+            sim.set_control(var, value)
+        for _ in range(20):
+            sim.run()
+
+        sim.reset(scenario)
+        assert sim._fdm is not None, "the viewer path must not rebuild the FDM"
+        for var in scenario.action_variables:
+            assert sim.get_control(var) == pytest.approx(fresh[var], abs=1e-6), var.name
+    finally:
+        sim.close()
+
+
+def test_two_episodes_from_the_same_seed_start_identically():
+    """JSBSim's run_ic() restores the flight condition but not engine state, so
+    without discarding the FDM a seeded run is not reproducible past its first
+    episode and the episodes are not independent draws.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
+    try:
+        first, _ = env.reset(seed=0)
+        # Fly episode 1 well away from the trimmed condition.
+        for _ in range(20):
+            env.step(np.array([0.9, -0.7, 0.5, 0.2], np.float32))
+        second, _ = env.reset(seed=0)
+        np.testing.assert_allclose(second, first, atol=1e-6)
+
+        # Back-to-back, with no flying in between: this is the one engine state
+        # alone breaks, and it fails by 1.56 without the rebuild.
+        third, _ = env.reset(seed=0)
+        np.testing.assert_allclose(third, first, atol=1e-6)
+    finally:
+        env.close()
+
+
+def test_reset_reuses_the_fdm_while_output_is_configured():
+    """Discarding the FDM re-applies the FlightGear output directive, which
+    rewrites a temp file and restarts the UDP stream. Neither belongs in the
+    middle of a session that is streaming to an already-running FlightGear
+    (`launch_flightgear=False`), so that path keeps its FDM -- determinism is
+    a training concern and nothing is training while you are watching.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    sim = JSBSimSimulator()
+    try:
+        sim.enable_visualization(port=5599, launch_flightgear=False)
+        sim.reset(scenario)
+        first = sim._fdm
+        sim.reset(scenario)
+        assert sim._fdm is first, "the streaming path must not rebuild the FDM"
+    finally:
+        sim.close()
+
+
+def test_reapplying_the_output_directive_does_not_orphan_the_previous_one():
+    """_apply_output_directive writes a NamedTemporaryFile with delete=False and
+    close() only unlinks the last one, so every rebuild used to strand a file.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    sim = JSBSimSimulator()
+    try:
+        sim.enable_visualization(port=5599, launch_flightgear=False)
+        sim.reset(scenario)
+        stale = sim._directive_path
+        assert stale is not None and stale.exists()
+        # Re-applying is what a rebuild does; enable_visualization takes the
+        # same path once an FDM exists.
+        sim.enable_visualization(port=5600, launch_flightgear=False)
+        assert sim._directive_path != stale
+        assert not stale.exists(), f"orphaned {stale}"
+    finally:
+        sim.close()

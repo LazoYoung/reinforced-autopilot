@@ -8,6 +8,7 @@ a metrics dict that goes straight to the tracker.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Callable
 
 import gymnasium as gym
@@ -32,14 +33,36 @@ no diagnostic pointing at the eval env being the cause.
 """
 
 
+@dataclass(frozen=True, slots=True)
+class EvalReport:
+    """What a set of greedy evaluation episodes produced.
+
+    Return alone is not enough once reward is per-step and positive: return is
+    roughly length times quality, so one number cannot separate a long bad
+    episode from a short good one. terminated_frac inverts the CartPole
+    reading -- for a flight scenario, terminated means the objective band was
+    left, so 0.0 is success and truncation is a survived episode.
+
+    The per-episode tuples are kept because five episodes averaging 900 is a
+    different result depending on whether they were all 900 or were
+    2000, 2000, 500, 0, 0.
+    """
+
+    mean_return: float
+    mean_length: float
+    terminated_frac: float
+    returns: tuple[float, ...]
+    lengths: tuple[int, ...]
+
+
 def evaluate_policy(
     algo: Algorithm,
     env_fn: Callable[[], gym.Env],
     episodes: int,
     seed: int = 0,
     max_steps: int = DEFAULT_EVAL_MAX_STEPS,
-) -> float:
-    """Mean return over `episodes` greedy episodes in a single environment.
+) -> EvalReport:
+    """Greedy evaluation over `episodes` episodes in a single environment.
 
     Greediness is requested through the same actor_state_dict convention the
     workers use -- exploration parameters under the `selector.` prefix -- rather
@@ -51,6 +74,8 @@ def evaluate_policy(
     )
     env = env_fn()
     returns: list[float] = []
+    lengths: list[int] = []
+    terminations: list[bool] = []
     try:
         for i in range(episodes):
             obs, _ = env.reset(seed=seed + i)
@@ -68,9 +93,17 @@ def evaluate_policy(
                         "the eval env likely has no time limit"
                     )
             returns.append(total)
+            terminations.append(bool(terminated))
+            lengths.append(steps)
     finally:
         env.close()
-    return float(np.mean(returns))
+    return EvalReport(
+        mean_return=float(np.mean(returns)),
+        mean_length=float(np.mean(lengths)),
+        terminated_frac=float(np.mean(terminations)),
+        returns=tuple(returns),
+        lengths=tuple(lengths),
+    )
 
 
 class Trainer:
@@ -178,11 +211,17 @@ class Trainer:
     def _checkpoint(self, *, eval_due: bool) -> None:
         eval_return = None
         if eval_due:
-            eval_return = evaluate_policy(
+            report = evaluate_policy(
                 self.algo, self.eval_env_fn, self.cfg.checkpoint.eval_episodes, seed=self.cfg.seed
             )
+            eval_return = report.mean_return
             self.tracker.log_metrics(
-                {"eval/return_mean": eval_return}, step=self.algo.global_step
+                {
+                    "eval/return_mean": report.mean_return,
+                    "eval/length_mean": report.mean_length,
+                    "eval/terminated_frac": report.terminated_frac,
+                },
+                step=self.algo.global_step,
             )
         written = self.checkpoints.save(
             config=self.cfg,

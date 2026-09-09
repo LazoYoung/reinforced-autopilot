@@ -103,7 +103,7 @@ def test_dqn_solves_cartpole(tmp_path):
     Vanilla DQN on CartPole finds a high-return policy and then does not hold
     it -- that is why CheckpointManager retains a best-by-eval-return
     checkpoint alongside the latest one, and it is why the real workflow is
-    `autopilot run` followed by `autopilot eval <best checkpoint>`. Asserting
+    `autopilot train` followed by `autopilot eval <best checkpoint>`. Asserting
     on the final learner would test "vanilla DQN converges stably on CartPole
     on a single seed," which is false and not this test's claim. The claim is
     that the best checkpoint the run produces, reloaded through the exact same
@@ -143,7 +143,7 @@ def test_dqn_solves_cartpole(tmp_path):
     tracker = RecordingTracker()
     # cfg.checkpoint.dir, not a second tmp_path: the directory is stated once,
     # here, and CheckpointManager reads it back out of the same cfg it was
-    # given -- exactly how cmd_run wires it in cli.py
+    # given -- exactly how cmd_train wires it in cli.py
     checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint)
     Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=env_fn).run()
 
@@ -169,8 +169,8 @@ def test_dqn_solves_cartpole(tmp_path):
     # the 20-episode re-eval (240ish) clears the 195 threshold by a 45-point
     # margin; that margin, not the sample size, is what makes this robust --
     # eval seeds only move the number by about +-2 (see the report)
-    final = evaluate_policy(best, env_fn, episodes=20, seed=1234)
-    assert final >= 195.0, (
-        f"DQN's best checkpoint reached only {final:.1f} on CartPole-v1 after "
+    report = evaluate_policy(best, env_fn, episodes=20, seed=1234)
+    assert report.mean_return >= 195.0, (
+        f"DQN's best checkpoint reached only {report.mean_return:.1f} on CartPole-v1 after "
         f"{cfg.total_steps} frames; the learning stack is not working end to end"
     )

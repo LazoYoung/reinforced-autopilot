@@ -35,6 +35,17 @@ class Simulator(abc.ABC):
         """Apply a control input, canonical units and sign convention."""
 
     @abc.abstractmethod
+    def get_control(self, var: FlightVariable) -> float:
+        """Read back a control *command*, canonical units and sign convention.
+
+        The exact inverse of :meth:`set_control`: ``set_control(v, x)`` then
+        ``get_control(v)`` must return ``x``. Deliberately not the control's
+        *position*, which on a trimmed aircraft is command plus trim -- feeding
+        a position back in as a command makes the backend add trim a second
+        time.
+        """
+
+    @abc.abstractmethod
     def run(self) -> None:
         """Advance the simulation by one physics timestep."""
 

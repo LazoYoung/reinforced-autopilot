@@ -3,7 +3,7 @@ from __future__ import annotations
 import gymnasium as gym
 import numpy as np
 import pytest
-from tests.conftest import CountingEnv, RecordingTracker
+from tests.conftest import CountingEnv, RecordingTracker, counting_env_fn
 
 from aero_train.algo.dqn import DQN
 from aero_train.checkpoint import CheckpointManager, load_checkpoint
@@ -314,8 +314,8 @@ def test_evaluate_policy_is_greedy_and_returns_a_mean_return():
     # explicit sync-payload check below is what actually proves greediness
     cfg = ALGO
     algo = _RecordingDQN(obs_shape=(1,), n_actions=2, cfg=cfg, seed=0)
-    mean_return = evaluate_policy(algo, env_fn(episode_len=5), episodes=3)
-    assert mean_return == pytest.approx(5.0)   # CountingEnv pays 1.0 per step
+    report = evaluate_policy(algo, env_fn(episode_len=5), episodes=3)
+    assert report.mean_return == pytest.approx(5.0)   # CountingEnv pays 1.0 per step
     assert float(algo.last_sync[SELECTOR_PREFIX + "epsilon"]) == 0.0
 
 
@@ -345,3 +345,78 @@ def test_evaluate_policy_caps_a_runaway_episode():
     algo = DQN(obs_shape=(1,), n_actions=2, cfg=ALGO, seed=0)
     with pytest.raises(RuntimeError, match="time limit"):
         evaluate_policy(algo, _NeverEndingEnv, episodes=1, max_steps=5)
+
+
+def test_eval_reports_length_and_termination_not_just_return():
+    """Return alone conflates 'flew a long time badly' with 'flew briefly well',
+    because return is roughly length times quality."""
+    algo = DQN(obs_shape=(1,), n_actions=2, cfg=ALGO, seed=0)
+    report = evaluate_policy(algo, env_fn(episode_len=4), episodes=3, seed=0)
+    assert report.mean_return == pytest.approx(4.0)
+    assert report.mean_length == pytest.approx(4.0)
+    assert report.terminated_frac == pytest.approx(1.0)
+    assert report.returns == (4.0, 4.0, 4.0)
+    assert report.lengths == (4, 4, 4)
+
+
+def test_a_truncated_episode_is_not_counted_as_terminated():
+    """terminated_frac is a distinct fact from length -- for a flight scenario
+    it inverts, since terminated means the objective band was left."""
+    algo = DQN(obs_shape=(1,), n_actions=2, cfg=ALGO, seed=0)
+    report = evaluate_policy(
+        algo, counting_env_fn(episode_len=4, truncate=True), episodes=2, seed=0
+    )
+    assert report.terminated_frac == pytest.approx(0.0)
+    assert report.mean_length == pytest.approx(4.0)
+
+
+class _DoubleRewardEnv(gym.Env):
+    """CountingEnv pays 1.0/step, so mean_return == mean_length whenever it is
+    the eval env -- a build that swaps the two EvalReport fields (or swaps
+    which field a value is logged under) would pass unnoticed. This env pays
+    2.0/step over a fixed length instead, so return and length land on
+    different numbers and a swap is visible. Not in conftest.py: no other
+    test needs a non-unit reward.
+    """
+
+    metadata = {"render_modes": []}
+    episode_len = 3
+
+    def __init__(self) -> None:
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, (1,), np.float32)
+        self.action_space = gym.spaces.Discrete(2)
+        self.t = 0
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        self.t = 0
+        return np.array([0.0], np.float32), {}
+
+    def step(self, action):
+        self.t += 1
+        done = self.t >= self.episode_len
+        return np.array([float(self.t)], np.float32), 2.0, done, False, {}
+
+
+def test_the_trainer_logs_all_three_eval_metrics(tmp_path):
+    # _DoubleRewardEnv (not CountingEnv): CountingEnv's constant 1.0/step
+    # reward makes eval/return_mean == eval/length_mean by coincidence, so a
+    # build that logs each under the other's key would pass this test anyway.
+    # Distinct 6.0 vs 3.0 values catch that.
+    cfg = make_cfg(eval_interval_iters=1, eval_episodes=2)
+    trainer, _, tracker, _ = make_trainer(
+        tmp_path, cfg, episode_len=1000, eval_env_fn=_DoubleRewardEnv
+    )
+    trainer.run()
+    assert tracker.metric_series("eval/return_mean") == pytest.approx([6.0] * 4)
+    assert tracker.metric_series("eval/length_mean") == pytest.approx([3.0] * 4)
+    assert tracker.metric_series("eval/terminated_frac") == pytest.approx([1.0] * 4)
+
+
+def test_mean_return_and_mean_length_land_on_the_right_fields():
+    """Distinct return (6.0) and length (3.0) values, so a build that writes
+    each into the other's EvalReport field fails this test specifically."""
+    algo = DQN(obs_shape=(1,), n_actions=2, cfg=ALGO, seed=0)
+    report = evaluate_policy(algo, _DoubleRewardEnv, episodes=2, seed=0)
+    assert report.mean_return == pytest.approx(6.0)
+    assert report.mean_length == pytest.approx(3.0)

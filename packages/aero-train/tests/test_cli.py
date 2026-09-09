@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import textwrap
 
+import gymnasium as gym
+import numpy as np
 import pytest
 
 from aero_train import cli
@@ -44,12 +46,12 @@ def config_path(tmp_path):
 
 
 def test_run_trains_and_exits_zero(config_path, tmp_path):
-    assert cli.main(["run", str(config_path)]) == 0
+    assert cli.main(["train", str(config_path)]) == 0
     assert (tmp_path / "ckpt" / "latest.pt").exists()
 
 
 def test_override_is_applied(config_path, tmp_path):
-    cli.main(["run", str(config_path), "--override", "run_name=overridden"])
+    cli.main(["train", str(config_path), "--override", "run_name=overridden"])
     assert load_checkpoint(tmp_path / "ckpt" / "latest.pt")["config"]["run_name"] == "overridden"
 
 
@@ -59,18 +61,18 @@ def test_override_accepts_bare_exponent_learning_rate(config_path, tmp_path):
     # grammar requires a decimal point before the exponent), raising a bare
     # "'<=' not supported between instances of 'str' and 'int'" from
     # __post_init__ instead of building a working config.
-    cli.main(["run", str(config_path), "--override", "algo.lr=1e-3"])
+    cli.main(["train", str(config_path), "--override", "algo.lr=1e-3"])
     cfg = load_checkpoint(tmp_path / "ckpt" / "latest.pt")["config"]
     assert cfg["algo"]["lr"] == pytest.approx(0.001)
 
 
 def test_override_cannot_bypass_validation(config_path):
     with pytest.raises(ValueError, match="frames_per_iter"):
-        cli.main(["run", str(config_path), "--override", "rollout.frames_per_iter=17"])
+        cli.main(["train", str(config_path), "--override", "rollout.frames_per_iter=17"])
 
 
 def test_resume_continues_from_the_saved_global_step(config_path, tmp_path):
-    cli.main(["run", str(config_path)])
+    cli.main(["train", str(config_path)])
     ckpt = tmp_path / "ckpt" / "latest.pt"
     before = load_checkpoint(ckpt)["global_step"]
     assert cli.main(["resume", str(ckpt), "--total-steps", "128"]) == 0
@@ -78,7 +80,7 @@ def test_resume_continues_from_the_saved_global_step(config_path, tmp_path):
 
 
 def test_resume_extends_the_frame_budget(config_path, tmp_path):
-    cli.main(["run", str(config_path)])
+    cli.main(["train", str(config_path)])
     ckpt = tmp_path / "ckpt" / "latest.pt"
     cli.main(["resume", str(ckpt), "--total-steps", "128"])
     payload = load_checkpoint(ckpt)
@@ -89,8 +91,8 @@ def test_resume_extends_the_frame_budget(config_path, tmp_path):
 def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
     # This config's eval_interval_iters (100) never fires within 4 iterations,
     # so plant a best_return as if an earlier eval already had -- exactly what
-    # a real `autopilot run` that found a good policy leaves behind.
-    cli.main(["run", str(config_path)])
+    # a real `autopilot train` that found a good policy leaves behind.
+    cli.main(["train", str(config_path)])
     ckpt = tmp_path / "ckpt" / "latest.pt"
     payload = load_checkpoint(ckpt)
     payload["best_return"] = 500.0
@@ -106,20 +108,114 @@ def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
 
 
 def test_eval_reports_a_mean_return(config_path, tmp_path, capsys):
-    cli.main(["run", str(config_path)])
+    cli.main(["train", str(config_path)])
     assert cli.main(["eval", str(tmp_path / "ckpt" / "latest.pt"), "--episodes", "2"]) == 0
-    assert "mean return" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    # "mean return" alone doesn't prove the length/terminated portions of the
+    # f-string survived -- a dropped or garbled tail would still contain that
+    # substring and pass unnoticed. Check for length and terminated too.
+    assert "mean return" in out
+    assert "length" in out
+    assert "terminated" in out
 
 
 def test_flightgear_is_only_offered_on_eval(config_path):
     with pytest.raises(SystemExit):
-        cli.main(["run", str(config_path), "--flightgear"])
+        cli.main(["train", str(config_path), "--flightgear"])
 
 
-def test_flightgear_eval_reports_that_it_lands_in_phase_2(config_path, tmp_path):
-    cli.main(["run", str(config_path)])
-    with pytest.raises(NotImplementedError, match="Phase 2"):
-        cli.main(["eval", str(tmp_path / "ckpt" / "latest.pt"), "--flightgear"])
+def test_training_subcommand_is_train_not_run(config_path):
+    """`run` said nothing about what it did, next to `resume` and `eval`."""
+    assert cli.main(["train", str(config_path)]) == 0
+    with pytest.raises(SystemExit):
+        cli.main(["run", str(config_path)])
+
+
+class _ScriptedEnv(gym.Env):
+    """One-step stand-in with the flight stack's spaces, so a checkpoint built
+    against them reloads. No aero_gym, no JSBSim: this test is about the flag."""
+
+    def __init__(self, n_obs: int = 12, n_actions: int = 81) -> None:
+        self.observation_space = gym.spaces.Box(-1.0, 1.0, (n_obs,), np.float32)
+        self.action_space = gym.spaces.Discrete(n_actions)
+
+    def reset(self, *, seed=None, options=None):
+        return np.zeros(self.observation_space.shape, np.float32), {}
+
+    def step(self, action):
+        return np.zeros(self.observation_space.shape, np.float32), 1.0, True, False, {}
+
+
+def _write_checkpoint(tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81):
+    """A checkpoint for an arbitrary env config, without running a training loop."""
+    from aero_train.algo import build_algorithm
+    from aero_train.config import config_from_dict, config_to_dict
+
+    cfg = config_from_dict(
+        {
+            "run_name": "fg",
+            "seed": 0,
+            "total_steps": 64,
+            "env": env,
+            "algo": {"type": "dqn", "hidden_sizes": [8], "buffer_size": 200,
+                     "warmup_frames": 16, "batch_size": 8},
+            "rollout": {"engine": "local", "envs_per_worker": 1, "frames_per_iter": 8},
+            "tracking": {"enabled": False},
+        }
+    )
+    algo = build_algorithm(
+        cfg,
+        gym.spaces.Box(-1.0, 1.0, (n_obs,), np.float32),
+        gym.spaces.Discrete(n_actions),
+    )
+    path = tmp_path / "ckpt.pt"
+    save_checkpoint(
+        path,
+        {
+            "config": config_to_dict(cfg),
+            "algo": algo.state_dict(),
+            "global_step": 0,
+            "frames": 0,
+            "best_return": float("-inf"),
+            "buffer": None,
+        },
+    )
+    return path
+
+
+def test_eval_with_flightgear_renders_through_the_scenario_branch(monkeypatch, tmp_path):
+    """The flag was accepted and unimplemented since Phase 1; it now sets the
+    render mode on a copy of the env config rather than raising."""
+    seen = {}
+
+    def fake_make_env_fn(env_cfg):
+        seen["render_mode"] = env_cfg.render_mode
+        return _ScriptedEnv
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    path = _write_checkpoint(tmp_path, env={"scenario": "steady_flight"})
+    assert cli.main(["eval", str(path), "--episodes", "1", "--flightgear"]) == 0
+    assert seen["render_mode"] == "flightgear"
+
+
+def test_eval_without_flightgear_leaves_the_env_config_alone(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_make_env_fn(env_cfg):
+        seen["render_mode"] = env_cfg.render_mode
+        return _ScriptedEnv
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    path = _write_checkpoint(tmp_path, env={"scenario": "steady_flight"})
+    assert cli.main(["eval", str(path), "--episodes", "1"]) == 0
+    assert seen["render_mode"] is None
+
+
+def test_eval_with_flightgear_on_a_gymnasium_env_says_why_not(tmp_path):
+    """It must fail before probing spaces, so no env is ever constructed."""
+    path = _write_checkpoint(tmp_path, env={"id": "CartPole-v1"}, n_obs=4, n_actions=2)
+    with pytest.raises(ValueError, match="aero_gym scenario"):
+        cli.main(["eval", str(path), "--flightgear"])
 
 
 def test_an_unknown_subcommand_exits_nonzero():
@@ -240,3 +336,67 @@ def test_mlflow_missing_uvx_returns_nonzero_and_does_not_raise(monkeypatch, caps
     err = capsys.readouterr().err
     assert "uvx" in err
     assert "uv" in err
+
+
+def test_training_with_a_viewer_builds_its_eval_env_without_one(monkeypatch, tmp_path):
+    """Trainer._checkpoint -> evaluate_policy -> eval_env_fn() builds a whole
+    second AeroGymEnv. With the training factory reused, that second env also
+    asks for render_mode='flightgear' and launches a second FlightGear on the
+    same default ports while the training viewer is still alive. The eval env is
+    not the one the user is watching, so it gets no viewer.
+    """
+    render_modes = []
+    captured = {}
+
+    def fake_make_env_fn(env_cfg):
+        render_modes.append(env_cfg.render_mode)
+
+        def _make():
+            return _ScriptedEnv()
+
+        _make.render_mode = env_cfg.render_mode
+        return _make
+
+    class FakeTrainer:
+        def __init__(self, *args, eval_env_fn=None, **kwargs):
+            captured["eval_env_fn"] = eval_env_fn
+            self.frames = 0
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    monkeypatch.setattr(cli, "Trainer", FakeTrainer)
+
+    path = tmp_path / "run.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            run_name: viewer
+            seed: 0
+            total_steps: 64
+            env:
+              scenario: steady_flight
+              render_mode: flightgear
+            algo:
+              type: dqn
+              hidden_sizes: [8]
+              buffer_size: 200
+              warmup_frames: 16
+              batch_size: 8
+            rollout:
+              engine: local
+              n_workers: 1
+              envs_per_worker: 1
+              frames_per_iter: 8
+            tracking:
+              enabled: false
+            checkpoint:
+              dir: {ckpt}
+            """
+        ).format(ckpt=tmp_path / "ckpt")
+    )
+
+    assert cli.main(["train", str(path)]) == 0
+    assert "flightgear" in render_modes, "the training env must keep its viewer"
+    assert captured["eval_env_fn"].render_mode is None

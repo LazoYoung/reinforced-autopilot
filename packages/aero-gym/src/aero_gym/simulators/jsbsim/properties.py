@@ -29,6 +29,10 @@ def _identity(x: float) -> float:
     return x
 
 
+def _negate(x: float) -> float:
+    return -x
+
+
 def _fps_to_fpm(x: float) -> float:
     return x * FPS_TO_FPM
 
@@ -53,6 +57,20 @@ OBSERVATION_MAP: dict[FlightVariable, ObservationMapping] = {
     FlightVariable.YAW_RATE: ObservationMapping("velocities/r-rad_sec", _rad_s_to_deg_s),
     FlightVariable.AOA: ObservationMapping("aero/alpha-deg", _identity),
     FlightVariable.AOS: ObservationMapping("aero/beta-deg", _identity),
+    # Negated for the same reason the commands are: JSBSim's positive elevator
+    # pitches the nose down and its positive rudder yaws left.
+    FlightVariable.ELEVATOR_POS: ObservationMapping("fcs/elevator-pos-norm", _negate),
+    # Not fcs/aileron-pos-norm: JSBSim's standard aileron FCS publishes a
+    # left/right surface pair and no combined property, so that name is in
+    # neither the c172p's catalog nor the 737's. The left surface is the one
+    # that follows a roll-right command with a positive value on both (the
+    # 737's right aileron reads its negation), so it already speaks the
+    # canonical sign.
+    FlightVariable.AILERON_POS: ObservationMapping("fcs/left-aileron-pos-norm", _identity),
+    FlightVariable.RUDDER_POS: ObservationMapping("fcs/rudder-pos-norm", _negate),
+    # Engine 0. The agent commands every engine identically (per_engine above),
+    # so engine 0 is representative.
+    FlightVariable.THROTTLE_POS: ObservationMapping("fcs/throttle-pos-norm", _identity),
 }
 
 

@@ -1,0 +1,32 @@
+# Hold-the-null-action baseline for the steady_flight scenario. The env: and
+# rollout: blocks below are byte-identical to dqn_steady_flight.yaml on
+# purpose -- a baseline flown on a different task is not a baseline, and this
+# is what makes its logged metrics a fair comparison against the DQN run.
+run_name: constant-steady-flight
+seed: 0
+total_steps: 100000
+device: cpu
+
+env:
+  scenario: steady_flight
+
+algo:
+  type: constant
+  action: null
+
+rollout:
+  engine: local
+  n_workers: 1
+  envs_per_worker: 8
+  frames_per_iter: 256
+
+tracking:
+  enabled: true
+  experiment: reinforced-autopilot
+
+checkpoint:
+  dir: runs/constant-steady-flight/checkpoints
+  interval_iters: 50
+  eval_interval_iters: 50
+  eval_episodes: 5
+  include_buffer: false

@@ -10,7 +10,7 @@ import numpy as np
 
 from .scenario import Scenario, Transition
 from .simulator import Simulator
-from .variables import ACTION_SPECS, OBSERVATION_SPECS, FlightVariable
+from .variables import ACTION_SPECS, FlightVariable
 
 
 class AeroGymEnv(gym.Env):
@@ -48,8 +48,8 @@ class AeroGymEnv(gym.Env):
 
         act_low = np.array([ACTION_SPECS[v].low for v in scenario.action_variables], np.float32)
         act_high = np.array([ACTION_SPECS[v].high for v in scenario.action_variables], np.float32)
-        obs_low = np.array([OBSERVATION_SPECS[v].low for v in scenario.observation_variables], np.float32)
-        obs_high = np.array([OBSERVATION_SPECS[v].high for v in scenario.observation_variables], np.float32)
+        obs_low = np.array([f.spec.low for f in scenario.observation_features], np.float32)
+        obs_high = np.array([f.spec.high for f in scenario.observation_features], np.float32)
         self.action_space = gym.spaces.Box(act_low, act_high, dtype=np.float32)
         self.observation_space = gym.spaces.Box(obs_low, obs_high, dtype=np.float32)
 
@@ -93,6 +93,35 @@ class AeroGymEnv(gym.Env):
         )
         return self._to_array(obs_dict), float(reward), bool(terminated), truncated, {"obs": obs_dict}
 
+    def initial_action(self) -> np.ndarray:
+        """The action equivalent to the aircraft's control state after reset.
+
+        DeltaAction seeds its accumulator from this. An accumulator starting at
+        zero would chop the throttle to idle on the very first step, undoing the
+        flyable state the aircraft profile exists to establish.
+
+        Meaningful only after reset(), which is where the aircraft profile
+        applies its startup commands.
+
+        Reads control *commands*, not control positions, and the distinction is
+        the whole point: on a trimmed aircraft the position is command plus
+        trim (the c172p resets with elevator-cmd 0.0, pitch-trim 0.2 and so
+        elevator-pos ~0.2), and an action is a command. Seeding the accumulator
+        from the position would hand that trim back to set_control, which JSBSim
+        then adds to trim a second time -- measured as a 1200 fpm sink and an
+        8-step episode under a do-nothing policy. Observing *position* remains
+        the right choice for observations (see docs/adr/0003); this is the
+        action seed, which is a different question with the opposite answer.
+        """
+        # get_control, indexed directly by the backend: a future action
+        # variable with no control mapping should raise KeyError naming it, the
+        # same fail-loud choice observe() makes for a missing property, rather
+        # than silently seeding DeltaAction's accumulator with a wrong 0.0.
+        values = [self.simulator.get_control(var) for var in self.scenario.action_variables]
+        return np.clip(
+            np.array(values, np.float32), self.action_space.low, self.action_space.high
+        )
+
     def close(self) -> None:
         self.simulator.close()
 
@@ -100,7 +129,9 @@ class AeroGymEnv(gym.Env):
         return {v: self.simulator.observe(v) for v in self.scenario.observation_variables}
 
     def _to_array(self, obs: dict[FlightVariable, float]) -> np.ndarray:
-        arr = np.array([obs[v] for v in self.scenario.observation_variables], np.float32)
+        arr = np.array(
+            [f.fn(obs) for f in self.scenario.observation_features], np.float32
+        )
         return np.clip(arr, self.observation_space.low, self.observation_space.high)
 
     def _pace_real_time(self) -> None:

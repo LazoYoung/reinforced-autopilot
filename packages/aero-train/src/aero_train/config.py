@@ -16,16 +16,67 @@ from typing import Any, Iterator, Literal, Sequence
 import yaml
 
 
+DEFAULT_DELTA = 0.1
+
+
 @dataclass(frozen=True, slots=True)
 class EnvConfig:
-    id: str
+    id: str | None = None
+    """A Gymnasium id. Mutually exclusive with `scenario`."""
+
+    scenario: str | None = None
+    """An aero_gym scenario name. Mutually exclusive with `id`.
+
+    A field rather than a prefix on `id` for two reasons. Gymnasium's make()
+    already documents and implements "module:Env-v0" as "import module, then
+    make Env-v0", so an id like "aero_gym:steady_flight" is a valid Gymnasium
+    id meaning something else -- reusing it would mean a removed branch check
+    silently does something almost-right instead of failing. And a prefix would
+    force this validation to parse a string to know which rules apply, when the
+    point of this module is that nothing downstream parses.
+    """
+
     max_episode_steps: int | None = None
+    scenario_kwargs: dict[str, Any] = field(default_factory=dict)
+    render_mode: str | None = None
+    delta: float = DEFAULT_DELTA
 
     def __post_init__(self) -> None:
-        if not self.id:
+        if (self.id is None) == (self.scenario is None):
+            raise ValueError(
+                "env needs exactly one of `id` (a Gymnasium id) or `scenario` "
+                "(an aero_gym scenario name)"
+            )
+        if self.id is not None and not self.id:
             raise ValueError("env.id must be a non-empty Gymnasium id")
+        if self.scenario is not None and not self.scenario:
+            raise ValueError("env.scenario must be a non-empty scenario name")
         if self.max_episode_steps is not None and self.max_episode_steps <= 0:
             raise ValueError("env.max_episode_steps must be positive or null")
+        if self.render_mode not in (None, "flightgear"):
+            raise ValueError(
+                f"env.render_mode must be null or 'flightgear', got {self.render_mode!r}"
+            )
+        if not 0.0 < self.delta <= 1.0:
+            raise ValueError("env.delta must be in (0, 1]")
+        if self.scenario is None:
+            # Rejected rather than ignored: a setting that silently does nothing
+            # is the failure mode this whole module exists to prevent.
+            for name, value in (
+                ("render_mode", self.render_mode),
+                ("scenario_kwargs", self.scenario_kwargs),
+                ("delta", self.delta != DEFAULT_DELTA or None),
+            ):
+                if value:
+                    raise ValueError(
+                        f"env.{name} only applies to an aero_gym scenario env; "
+                        "set env.scenario instead of env.id"
+                    )
+        if "max_episode_steps" in self.scenario_kwargs:
+            raise ValueError(
+                "set the episode limit with env.max_episode_steps, not inside "
+                "env.scenario_kwargs -- one setting, one place"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,10 +127,35 @@ class DQNConfig:
                 raise ValueError(f"algo.{name} must be positive")
 
 
+@dataclass(frozen=True, slots=True)
+class RandomConfig:
+    type: Literal["random"] = "random"
+
+
+@dataclass(frozen=True, slots=True)
+class ConstantConfig:
+    type: Literal["constant"] = "constant"
+    action: int | None = None
+    """Which action to hold. None means the middle index of the action space,
+    which for DeltaAction is the all-zero-delta action by construction."""
+
+    def __post_init__(self) -> None:
+        if self.action is None:
+            return
+        if isinstance(self.action, bool) or not isinstance(self.action, int):
+            raise ValueError("algo.action must be an integer or null")
+        if self.action < 0:
+            raise ValueError("algo.action must be non-negative")
+
+
 # Widens to `DQNConfig | A2CConfig | DDPGConfig` in Phase 2. The registry is the
 # discriminator for the tagged union, keyed on the YAML `type:` field.
-AlgoConfig = DQNConfig
-ALGO_CONFIGS: dict[str, type] = {"dqn": DQNConfig}
+AlgoConfig = DQNConfig | RandomConfig | ConstantConfig
+ALGO_CONFIGS: dict[str, type] = {
+    "dqn": DQNConfig,
+    "random": RandomConfig,
+    "constant": ConstantConfig,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +230,14 @@ class TrainConfig:
             raise ValueError(
                 f"total_steps ({self.total_steps}) is at or below the replay warmup "
                 f"threshold ({warmup}); the run would never take a gradient step"
+            )
+        envs = self.rollout.n_workers * self.rollout.envs_per_worker
+        if self.env.render_mode == "flightgear" and envs > 1:
+            raise ValueError(
+                f"env.render_mode 'flightgear' needs exactly one environment in "
+                f"total, but rollout.n_workers ({self.rollout.n_workers}) * "
+                f"envs_per_worker ({self.rollout.envs_per_worker}) is {envs}; "
+                "FlightGear is one viewer showing one aircraft"
             )
 
 

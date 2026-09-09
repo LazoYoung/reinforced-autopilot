@@ -9,10 +9,10 @@ from pathlib import Path
 from aero_gym.scenario import Scenario
 from aero_gym.simulator import Simulator, SimulatorError
 from aero_gym.variables import FlightVariable
-from .aircraft import profile_for
+from .aircraft import AircraftProfile, profile_for
 from .cockpit import CockpitSync
 from .flightgear import FlightGearViewer
-from .properties import CONTROL_MAP, OBSERVATION_MAP
+from .properties import CONTROL_MAP, OBSERVATION_MAP, ObservationMapping
 
 _OUTPUT_DIRECTIVE = (
     '<?xml version="1.0"?>\n'
@@ -34,6 +34,7 @@ class JSBSimSimulator(Simulator):
         self._fdm = None
         self._aircraft: str | None = None
         self._engines = 1
+        self._profile: AircraftProfile | None = None
         self._viewer: FlightGearViewer | None = None
         self._viewer_synced = False
         self._visualization: dict[str, object] | None = None
@@ -46,6 +47,8 @@ class JSBSimSimulator(Simulator):
     def reset(self, scenario: Scenario) -> None:
         ic = scenario.initial_conditions
         profile = profile_for(scenario.aircraft)
+        # observe() resolves per-aircraft property overrides through it
+        self._profile = profile
         if self._viewer is not None:
             if self._viewer.aircraft is None:
                 # Otherwise FlightGear renders whatever it defaults to, which
@@ -57,6 +60,35 @@ class JSBSimSimulator(Simulator):
                 lon_deg=ic.longitude_deg,
                 heading_deg=ic.heading_deg,
             )
+        if self._viewer is None and self._visualization is None:
+            # run_ic() restores the flight condition but not the whole model:
+            # engine state (rpm, manifold pressure, thrust) carries across it,
+            # so two episodes from the same seed diverge even with identical
+            # controls. Measured on the c172p: back-to-back resets differ by
+            # 1.56 in the observation vector, and a do-nothing episode 2 sees a
+            # pitch rate of +1.37 deg/s where episode 1 saw -0.54. Discarding
+            # the FDM makes them bit-identical, and costs ~1.1 ms per episode
+            # (0.1 -> 1.2 ms) -- a few seconds across a full training run.
+            #
+            # Not done while a viewer is attached: CockpitSync captures the FDM
+            # once (guarded by _viewer_synced) and _ensure_fdm rewrites the
+            # FlightGear output directive on every build, so rebuilding under a
+            # live cockpit would leave the sync bound to a dead FDM.
+            #
+            # `_visualization` is checked as well as `_viewer`, because output
+            # can be configured without one: enable_visualization(
+            # launch_flightgear=False) streams to an already-running FlightGear,
+            # and close() clears the viewer but keeps the output settings. Every
+            # rebuild re-applies the output directive, which restarts the UDP
+            # stream mid-session and writes a fresh temp file.
+            #
+            # Visualization is an interactive path where episode-to-episode
+            # determinism buys nothing; the control clear below is what keeps
+            # that path honest. Note this makes reset determinism a function of
+            # render_mode -- a *training* run configured with a viewer is not
+            # reproducible. Eval is unaffected: cli._train strips render_mode
+            # from the eval env factory.
+            self._fdm = None
         fdm = self._ensure_fdm(scenario.aircraft)
         fdm["ic/lat-geod-deg"] = ic.latitude_deg
         fdm["ic/long-gc-deg"] = ic.longitude_deg
@@ -70,11 +102,31 @@ class JSBSimSimulator(Simulator):
         fdm["ic/r-rad_sec"] = 0.0
         if not fdm.run_ic():
             raise SimulatorError("JSBSim failed to initialize the requested flight condition")
+        # run_ic() leaves the FCS command properties alone, so whenever the FDM
+        # is reused -- the viewer path above -- episode N+1 would start holding
+        # whatever stick and rudder episode N ended on, and the aircraft would
+        # visibly jerk at the start of every episode. Redundant after a rebuild
+        # (a fresh FDM commands nothing) and cheap, so it runs unconditionally.
+        # Written through set_control so the properties cleared are exactly the
+        # ones the agent can write, per-engine throttles included.
+        for var in CONTROL_MAP:
+            self.set_control(var, 0.0)
         # Start with the engine(s) running and the aircraft's own controls set,
-        # so it is flyable from the first step.
+        # so it is flyable from the first step. After the clear above, so the
+        # profile's commands win.
         fdm["propulsion/set-running"] = -1
         for prop, value in profile.startup.items():
             fdm[prop] = value
+        # JSBSim recomputes fcs/*-pos-norm only inside run(), so right now every
+        # position property still reads 0 while the commands above say 0.7.
+        # Settling one agent step's worth of physics costs 0.1 s of simulated
+        # time -- a few feet of altitude at cruise -- and buys a first
+        # observation that is true. Measured on the c172p: after 12 steps
+        # fcs/throttle-pos-norm reads 0.7 against a commanded 0.7 (the profile
+        # has no fcs/elevator-cmd-norm, only fcs/pitch-trim-cmd-norm = 0.2,
+        # which fcs/elevator-pos-norm converges toward instead).
+        for _ in range(max(1, round(1.0 / (self._dt * scenario.agent_hz)))):
+            self.run()
         if self._viewer is not None and not self._viewer_synced:
             # Don't start the episode while FlightGear is still on its splash
             # screen — nothing would be visualized. Warns and proceeds headless
@@ -82,6 +134,16 @@ class JSBSimSimulator(Simulator):
             if self._viewer.wait_until_ready():
                 self._start_cockpit_sync(fdm)
             self._viewer_synced = True
+        self._validate_observations(scenario)
+
+    def _validate_observations(self, scenario: Scenario) -> None:
+        """Read every observed variable once so a missing property fails here.
+
+        Without it the failure surfaces mid-rollout, with nothing pointing at
+        the aircraft profile as the cause.
+        """
+        for var in scenario.observation_variables:
+            self.observe(var)
 
     def _start_cockpit_sync(self, fdm) -> None:
         """Supply the cockpit state FlightGear's disabled flight model can't.
@@ -109,15 +171,43 @@ class JSBSimSimulator(Simulator):
         else:
             fdm[mapping.prop] = value
 
+    def get_control(self, var: FlightVariable) -> float:
+        """Read back what set_control last wrote, undoing its sign.
+
+        Same property and same sign as set_control, including the per-engine
+        indexing: engine 0 is read back because the agent commands every engine
+        identically, so it is representative of what was written.
+        """
+        mapping = CONTROL_MAP[var]
+        fdm = self._require_fdm()
+        prop = f"{mapping.prop}[0]" if mapping.per_engine else mapping.prop
+        return mapping.sign * float(fdm[prop])
+
     def run(self) -> None:
         fdm = self._require_fdm()
         fdm.run()
         if math.isnan(fdm["position/h-sl-ft"]):
             raise SimulatorError("JSBSim state diverged (NaN altitude)")
 
+    def _mapping(self, var: FlightVariable) -> ObservationMapping:
+        if self._profile is not None and var in self._profile.observation_props:
+            return self._profile.observation_props[var]
+        return OBSERVATION_MAP[var]
+
     def observe(self, var: FlightVariable) -> float:
-        mapping = OBSERVATION_MAP[var]
-        return mapping.to_canonical(float(self._require_fdm()[mapping.prop]))
+        mapping = self._mapping(var)
+        try:
+            value = float(self._require_fdm()[mapping.prop])
+        except KeyError as exc:
+            # JSBSim's own message names only the property. Naming the variable
+            # and pointing at the profile is what turns this from a mystery
+            # hundreds of steps into a rollout into a one-line fix.
+            raise SimulatorError(
+                f"{var.name} needs JSBSim property {mapping.prop!r}, which model "
+                f"{self._aircraft!r} does not publish; add an observation_props "
+                "override to its AircraftProfile"
+            ) from exc
+        return mapping.to_canonical(value)
 
     def enable_visualization(
         self,
@@ -183,6 +273,12 @@ class JSBSimSimulator(Simulator):
 
     def _apply_output_directive(self) -> None:
         assert self._visualization is not None
+        # close() unlinks only the newest path, so without this every re-apply
+        # -- a rebuild for a different aircraft, or another
+        # enable_visualization -- would strand its predecessor in the temp dir.
+        if self._directive_path is not None:
+            self._directive_path.unlink(missing_ok=True)
+            self._directive_path = None
         content = _OUTPUT_DIRECTIVE.format(**self._visualization)
         with tempfile.NamedTemporaryFile(
             "w", suffix=".xml", prefix="aero_gym_fg_", delete=False

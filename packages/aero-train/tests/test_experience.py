@@ -210,3 +210,46 @@ def test_a_pending_autoreset_carries_across_a_collect_boundary():
     assert second.valid[:, 0].tolist() == [False, True]
     assert second_eps == []
     src.close()
+
+
+class BothFlagsEnv(gym.Env):
+    """Ends its episode with terminated AND truncated on the same step.
+
+    Not a contrived shape: AeroGymEnv computes the two independently, so a step
+    that both leaves the reward band and hits max_episode_steps sets both, and
+    gymnasium's own TimeLimit wrapper ORs `truncated` onto a terminating step
+    the same way.
+    """
+
+    metadata = {"render_modes": []}
+
+    def __init__(self, episode_len: int = 3) -> None:
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, (1,), np.float32)
+        self.action_space = gym.spaces.Discrete(2)
+        self.episode_len = episode_len
+        self.t = 0
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        self.t = 0
+        return np.array([0.0], np.float32), {}
+
+    def step(self, action):
+        self.t += 1
+        done = self.t >= self.episode_len
+        return np.array([float(self.t)], np.float32), 1.0, done, done, {}
+
+
+def test_a_step_that_both_terminates_and_truncates_is_recorded_as_terminated():
+    """Segment forbids both flags on one step, and rightly so -- `truncated`
+    means "bootstrap past this", which is exactly wrong for a terminal state.
+    The collector is where the two are reconciled, because an env-level fix
+    would not reach gymnasium's TimeLimit.
+    """
+    env = gym.vector.SyncVectorEnv([lambda: BothFlagsEnv(episode_len=3)])
+    src = ExperienceSource(env, ConstantAgent(), seed=0)
+    seg, episodes = src.collect(4)
+    assert seg.terminated[2, 0], "the ending step must be recorded as terminated"
+    assert not seg.truncated[2, 0], "and must not also be recorded as truncated"
+    assert [e.terminated for e in episodes] == [True]
+    src.close()

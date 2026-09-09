@@ -95,3 +95,32 @@ def test_transitions_reject_ragged_fields():
 def test_episode_result_records_why_the_episode_ended():
     assert EpisodeResult(ret=12.0, length=4, terminated=True).terminated is True
     assert EpisodeResult(ret=12.0, length=4, terminated=False).terminated is False
+
+
+def test_random_agent_covers_the_action_space():
+    from aero_train.primitives import RandomAgent
+
+    agent = RandomAgent(81, np.random.default_rng(0))
+    actions, state = agent(np.zeros((256, 4), np.float32))
+    assert actions.shape == (256,)
+    assert actions.dtype == np.int64
+    assert 0 <= actions.min() and actions.max() < 81
+    assert len(set(actions.tolist())) > 40
+    assert state is None
+
+
+def test_constant_agent_returns_one_action_for_every_env():
+    from aero_train.primitives import ConstantAgent
+
+    actions, _ = ConstantAgent(40)(np.zeros((8, 4), np.float32))
+    assert actions.tolist() == [40] * 8
+
+
+def test_a_weightless_agent_accepts_the_shared_actor_state_dict():
+    """evaluate_policy pushes selector.epsilon to every algorithm; a baseline
+    has nothing to load and must not choke on it."""
+    from aero_train.primitives import SELECTOR_PREFIX, ConstantAgent, RandomAgent
+
+    payload = {SELECTOR_PREFIX + "epsilon": np.asarray(0.0, np.float32)}
+    RandomAgent(81).sync_weights(payload)
+    ConstantAgent(40).sync_weights(payload)

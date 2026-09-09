@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import shutil
 import sys
@@ -30,6 +31,15 @@ def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
 
 def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     env_fn = make_env_fn(cfg.env)
+    # A separate factory with the viewer stripped, not env_fn reused: eval
+    # builds its own env, and with render_mode carried over that env launches a
+    # second FlightGear on the same default ports while the training viewer is
+    # still alive. The eval env is not the one the user is watching.
+    eval_env_fn = (
+        env_fn
+        if cfg.env.render_mode is None
+        else make_env_fn(dataclasses.replace(cfg.env, render_mode=None))
+    )
     obs_space, act_space = _spaces(env_fn)
     algo = build_algorithm(cfg, obs_space, act_space)
     frames = 0
@@ -47,13 +57,13 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     engine = build_engine(cfg.rollout, env_fn, algo.make_agent(), cfg.seed)
     tracker = build_tracker(cfg)
     checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint, best_return=best_return)
-    trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=env_fn)
+    trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=eval_env_fn)
     trainer.frames = frames
     trainer.run()
     return 0
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def cmd_train(args: argparse.Namespace) -> int:
     return _train(load_config(args.config, args.override))
 
 
@@ -69,20 +79,27 @@ def cmd_resume(args: argparse.Namespace) -> int:
 def cmd_eval(args: argparse.Namespace) -> int:
     payload = load_checkpoint(Path(args.checkpoint))
     cfg = config_from_dict(payload["config"])
+    env_cfg = cfg.env
     if args.flightgear:
-        # eval is the only path that will touch FlightGear, and it is single-env
-        # and local by construction -- one viewer, one aircraft. The flag is
-        # accepted now and wired up in Phase 2, when EnvConfig gains a render
-        # mode and aero_gym scenarios become loadable.
-        raise NotImplementedError(
-            "--flightgear needs the aero_gym env branch, which arrives in Phase 2"
-        )
-    env_fn = make_env_fn(cfg.env)
+        if env_cfg.scenario is None:
+            raise ValueError(
+                "--flightgear needs an aero_gym scenario env; this checkpoint was "
+                f"trained on Gymnasium env {env_cfg.id!r}, which has no viewer"
+            )
+        # eval is the only path that touches FlightGear, and it is single-env and
+        # local by construction -- one viewer, one aircraft.
+        env_cfg = dataclasses.replace(env_cfg, render_mode="flightgear")
+    env_fn = make_env_fn(env_cfg)
     obs_space, act_space = _spaces(env_fn)
     algo = build_algorithm(cfg, obs_space, act_space)
     algo.load_state_dict(payload["algo"])
-    mean_return = evaluate_policy(algo, env_fn, args.episodes, seed=cfg.seed)
-    print(f"{args.episodes} episodes, mean return {mean_return:.2f}")
+    report = evaluate_policy(algo, env_fn, args.episodes, seed=cfg.seed)
+    # "mean return" (not just "return") is the substring test_eval_reports_a_mean_return
+    # asserts on -- keep it literally present alongside the new length/termination fields.
+    print(
+        f"{args.episodes} episodes: mean return {report.mean_return:.2f}, "
+        f"length {report.mean_length:.1f}, terminated {report.terminated_frac:.0%}"
+    )
     return 0
 
 
@@ -142,16 +159,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autopilot")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="train from a YAML run config")
-    run.add_argument("config")
-    run.add_argument(
+    train = sub.add_parser("train", help="train from a YAML run config")
+    train.add_argument("config")
+    train.add_argument(
         "--override",
         action="append",
         default=[],
         metavar="PATH=VALUE",
         help="dotted override, e.g. rollout.n_workers=4; applied before validation",
     )
-    run.set_defaults(func=cmd_run)
+    train.set_defaults(func=cmd_train)
 
     resume = sub.add_parser("resume", help="continue training from a checkpoint")
     resume.add_argument("checkpoint")

@@ -75,3 +75,33 @@ def test_an_unknown_aircraft_still_gets_engine_controls():
 def test_every_profile_names_a_flightgear_aircraft():
     for name, profile in PROFILES.items():
         assert profile.flightgear, f"{name} has no FlightGear aircraft"
+
+
+def test_the_aileron_position_reads_a_surface_jsbsim_actually_publishes():
+    """No model publishes fcs/aileron-pos-norm; the FCS exposes a left/right pair."""
+    from aero_gym.simulators.jsbsim.properties import OBSERVATION_MAP
+    from aero_gym.variables import FlightVariable as V
+
+    mapping = OBSERVATION_MAP[V.AILERON_POS]
+    assert "aileron-pos-norm" in mapping.prop
+    assert mapping.prop != "fcs/aileron-pos-norm"
+
+
+def test_an_unlisted_aircraft_has_no_overrides():
+    """The fallback profile takes the base map wholesale, which is what lets an
+    aircraft nobody has described still fly."""
+    from aero_gym.simulators.jsbsim.aircraft import profile_for
+
+    assert profile_for("glider").observation_props == {}
+
+
+def test_control_positions_are_negated_exactly_like_the_commands():
+    """Same convention mismatch, same fix -- so a commanded canonical value and
+    the resulting canonical position share a sign."""
+    from aero_gym.simulators.jsbsim.properties import CONTROL_MAP, OBSERVATION_MAP
+    from aero_gym.variables import ACTION_POSITION
+
+    for action, position in ACTION_POSITION.items():
+        command_sign = CONTROL_MAP[action].sign
+        observed = OBSERVATION_MAP[position].to_canonical(1.0)
+        assert observed == command_sign, f"{action.name} and {position.name} disagree"

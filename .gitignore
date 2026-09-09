@@ -14,10 +14,15 @@ wheels/
 
 # Claude
 .claude/
-docs/
+.superpowers/
+docs/adr
+docs/superpowers/
 CLAUDE.md
 
 # Training run artifacts
 runs/
 mlruns/
 mlflow.db
+
+# Subagent-driven development scratch (ledger, briefs, review packages)
+.superpowers/

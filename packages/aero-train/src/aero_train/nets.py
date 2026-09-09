@@ -1,10 +1,11 @@
 """Network builders shared by every algorithm.
 
-The policies here are small -- an 11-observation, 4-action flight task with a
-2x64 MLP is roughly 5k parameters (~20 KB in fp32). That number is load-bearing
-for the whole distribution design: at 20 KB a weight broadcast costs
-microseconds, which is why on-policy algorithms in this project can be exactly
-on-policy rather than approximately so.
+The policies here are small -- a 12-observation, 81-action flight task
+(steady_flight through DeltaAction's Discrete(3**4)) with DQNConfig's default
+2x128 MLP is roughly 28.6k parameters (~112 KiB in fp32). That number is
+load-bearing for the whole distribution design: at 112 KiB a weight broadcast
+still costs microseconds, which is why on-policy algorithms in this project
+can be exactly on-policy rather than approximately so.
 """
 
 from __future__ import annotations

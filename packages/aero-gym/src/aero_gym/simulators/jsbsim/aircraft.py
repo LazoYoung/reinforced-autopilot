@@ -11,6 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from aero_gym.variables import FlightVariable
+
+from .properties import ObservationMapping
+
 CockpitFn = Callable[[object, dict[str, float]], dict[str, object]]
 """Builds aircraft-specific cockpit writes from the FDM and the pilot controls."""
 
@@ -35,6 +39,16 @@ class AircraftProfile:
     cockpit: CockpitFn | None = None
     mirrors: tuple[tuple[str, str], ...] = ()
     republish: tuple[str, ...] = ()
+    observation_props: dict[FlightVariable, ObservationMapping] = field(default_factory=dict)
+    """Per-aircraft replacements for entries of OBSERVATION_MAP.
+
+    The pos-norm property names are not universal. Nothing in PROFILES needs an
+    override today, because the base map already names a surface both models
+    publish; an aircraft whose FCS exposes a different one would. A full
+    ObservationMapping rather than a bare property name, because a substituted
+    surface need not share the sign of the one it replaces -- the 737's right
+    aileron reads the negation of its left.
+    """
 
 
 def _c172p_cockpit(fdm, controls: dict[str, float]) -> dict[str, object]:

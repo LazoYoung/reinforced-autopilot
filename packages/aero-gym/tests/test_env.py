@@ -101,3 +101,54 @@ def test_flightgear_render_mode_enables_visualization(scenario, fake_simulator):
 def test_invalid_render_mode_rejected(scenario, fake_simulator):
     with pytest.raises(ValueError):
         AeroGymEnv(scenario, simulator=fake_simulator, render_mode="human")
+
+
+def test_the_box_follows_the_features_not_the_variables(initial_conditions, fake_simulator):
+    """Altitude is read from the simulator but never shown raw: the agent sees
+    the error against a target, bounded by the band that terminates on it."""
+    from aero_gym.scenario import ObservationFeature, raw
+    from aero_gym.variables import VariableSpec
+
+    error = ObservationFeature(
+        "altitude_error_ft",
+        VariableSpec("ft", -500.0, 500.0, "altitude minus target"),
+        lambda obs: obs[V.ALTITUDE] - 5000.0,
+    )
+    scenario = Scenario(
+        name="features",
+        initial_conditions=initial_conditions,
+        reward_fn=lambda t: (0.0, False),
+        observation_variables=(V.ALTITUDE, V.ROLL),
+        observation_features=(error, raw(V.ROLL, -75.0, 75.0)),
+    )
+    env = AeroGymEnv(scenario, simulator=fake_simulator)
+    assert env.observation_space.low.tolist() == [-500.0, -75.0]
+
+    # reset() first, since FakeSimulator.reset() re-applies the scenario's
+    # initial altitude every call; setting state has to happen after, and
+    # step() (unlike reset()) reads it back without re-establishing it.
+    env.reset(seed=0)
+    fake_simulator.state[V.ALTITUDE] = 5200.0
+    fake_simulator.state[V.ROLL] = 3.0
+    obs, *_ = env.step(np.zeros(env.action_space.shape, np.float32))
+    assert obs.tolist() == pytest.approx([200.0, 3.0])
+
+
+def test_a_feature_reading_an_unobserved_variable_names_it(initial_conditions, fake_simulator):
+    from aero_gym.scenario import ObservationFeature
+    from aero_gym.variables import VariableSpec
+
+    scenario = Scenario(
+        name="missing",
+        initial_conditions=initial_conditions,
+        reward_fn=lambda t: (0.0, False),
+        observation_variables=(V.ROLL,),
+        observation_features=(
+            ObservationFeature(
+                "aoa", VariableSpec("deg", -20.0, 20.0, "x"), lambda obs: obs[V.AOA]
+            ),
+        ),
+    )
+    env = AeroGymEnv(scenario, simulator=fake_simulator)
+    with pytest.raises(KeyError, match="AOA"):
+        env.reset(seed=0)

@@ -39,9 +39,13 @@ class EvalReport:
 
     Return alone is not enough once reward is per-step and positive: return is
     roughly length times quality, so one number cannot separate a long bad
-    episode from a short good one. terminated_frac inverts the CartPole
-    reading -- for a flight scenario, terminated means the objective band was
-    left, so 0.0 is success and truncation is a survived episode.
+    episode from a short good one. return_per_step is that quality half on its
+    own -- for steady_flight it reads straight off the reward scale, 1.0 on
+    target and 0.0 at the band's corner, so it answers "how well is it flying,
+    while it flies". Unlike terminated_frac it moves from the first eval,
+    before the agent can survive a full episode. terminated_frac inverts the
+    CartPole reading -- for a flight scenario, terminated means the objective
+    band was left, so 0.0 is success and truncation is a survived episode.
 
     The per-episode tuples are kept because five episodes averaging 900 is a
     different result depending on whether they were all 900 or were
@@ -50,6 +54,7 @@ class EvalReport:
 
     mean_return: float
     mean_length: float
+    return_per_step: float
     terminated_frac: float
     returns: tuple[float, ...]
     lengths: tuple[int, ...]
@@ -100,6 +105,11 @@ def evaluate_policy(
     return EvalReport(
         mean_return=float(np.mean(returns)),
         mean_length=float(np.mean(lengths)),
+        # Each episode counts once, like the two means above -- not
+        # sum(returns) / sum(lengths), which weights by length and lets one
+        # long episode speak for the whole eval. Lengths are >= 1 because the
+        # loop above always takes a step before checking done, so no guard.
+        return_per_step=float(np.mean([r / n for r, n in zip(returns, lengths)])),
         terminated_frac=float(np.mean(terminations)),
         returns=tuple(returns),
         lengths=tuple(lengths),
@@ -219,6 +229,7 @@ class Trainer:
                 {
                     "eval/return_mean": report.mean_return,
                     "eval/length_mean": report.mean_length,
+                    "eval/return_per_step": report.return_per_step,
                     "eval/terminated_frac": report.terminated_frac,
                 },
                 step=self.algo.global_step,

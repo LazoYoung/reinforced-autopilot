@@ -98,7 +98,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
     # asserts on -- keep it literally present alongside the new length/termination fields.
     print(
         f"{args.episodes} episodes: mean return {report.mean_return:.2f}, "
-        f"length {report.mean_length:.1f}, terminated {report.terminated_frac:.0%}"
+        f"length {report.mean_length:.1f}, return/step {report.return_per_step:.3f}, "
+        f"terminated {report.terminated_frac:.0%}"
     )
     return 0
 

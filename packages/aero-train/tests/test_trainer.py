@@ -398,7 +398,7 @@ class _DoubleRewardEnv(gym.Env):
         return np.array([float(self.t)], np.float32), 2.0, done, False, {}
 
 
-def test_the_trainer_logs_all_three_eval_metrics(tmp_path):
+def test_the_trainer_logs_every_eval_metric(tmp_path):
     # _DoubleRewardEnv (not CountingEnv): CountingEnv's constant 1.0/step
     # reward makes eval/return_mean == eval/length_mean by coincidence, so a
     # build that logs each under the other's key would pass this test anyway.
@@ -420,3 +420,64 @@ def test_mean_return_and_mean_length_land_on_the_right_fields():
     report = evaluate_policy(algo, _DoubleRewardEnv, episodes=2, seed=0)
     assert report.mean_return == pytest.approx(6.0)
     assert report.mean_length == pytest.approx(3.0)
+
+
+class _VaryingQualityEnv(gym.Env):
+    """Episodes that differ in BOTH length and per-step reward.
+
+    Every other eval env here is fixed-length, which makes the mean of the
+    per-episode ratios and the ratio of the means agree -- so neither could
+    tell the two definitions of return-per-step apart. This one pays 1.0/step
+    for 4 steps, then 0.2 for a single step:
+
+        mean of ratios   = (4.0/4 + 0.2/1) / 2      = 0.6
+        ratio of means   = ((4.0 + 0.2)/2) / ((4 + 1)/2) = 0.84
+
+    Not in conftest.py: no other test needs episodes to vary between resets.
+    """
+
+    metadata = {"render_modes": []}
+    plan = ((4, 1.0), (1, 0.2))   # (length, reward per step) per episode
+
+    def __init__(self) -> None:
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, (1,), np.float32)
+        self.action_space = gym.spaces.Discrete(2)
+        self.episode = -1
+        self.t = 0
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        self.episode += 1
+        self.t = 0
+        return np.array([0.0], np.float32), {}
+
+    def step(self, action):
+        length, reward = self.plan[self.episode % len(self.plan)]
+        self.t += 1
+        return np.array([float(self.t)], np.float32), reward, self.t >= length, False, {}
+
+
+def test_return_per_step_averages_episodes_not_steps():
+    """Return is roughly length times quality, so return-per-step is the
+    quality half -- but only if each episode counts once. Averaging over steps
+    instead (sum of returns over sum of lengths) lets one long episode drown
+    out a short one, and gives 0.84 here rather than 0.6.
+    """
+    algo = DQN(obs_shape=(1,), n_actions=2, cfg=ALGO, seed=0)
+    report = evaluate_policy(algo, _VaryingQualityEnv, episodes=2, seed=0)
+    assert report.mean_return == pytest.approx(2.1)
+    assert report.mean_length == pytest.approx(2.5)
+    assert report.return_per_step == pytest.approx(0.6)
+    assert report.return_per_step != pytest.approx(0.84)
+
+
+def test_the_trainer_logs_return_per_step(tmp_path):
+    # _DoubleRewardEnv pays 2.0/step over 3 steps, so return (6.0), length
+    # (3.0) and return-per-step (2.0) are three distinct numbers: a build that
+    # logs any one of them under another's key fails here.
+    cfg = make_cfg(eval_interval_iters=1, eval_episodes=2)
+    trainer, _, tracker, _ = make_trainer(
+        tmp_path, cfg, episode_len=1000, eval_env_fn=_DoubleRewardEnv
+    )
+    trainer.run()
+    assert tracker.metric_series("eval/return_per_step") == pytest.approx([2.0] * 4)

@@ -121,3 +121,12 @@ keyed on the JSBSim model name:
 
 Unlisted aircraft fall back to a bare profile and still fly, with a generic
 cockpit.
+
+**Watch for instruments that read an aircraft-private property.** A gauge may
+animate on something the aircraft's *own* JSBSim systems derive, rather than on
+FlightGear's instrument property — and those systems do not run under
+`--fdm=null`. The c172p's airspeed needle is one: it reads
+`fdm/jsbsim/velocities/vias-kts`, so the panel stays at zero while FlightGear's
+own airspeed indicator computes correctly and goes unread. `republish` cannot
+fix that case, since it copies a property under the same name; a rename belongs
+in `cockpit`.

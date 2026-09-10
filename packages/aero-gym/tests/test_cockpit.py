@@ -132,6 +132,16 @@ def test_c172p_yoke_follows_the_controls():
     assert props["/sim/model/c172p/cockpit/pedals-rudder"] == props["/controls/flight/rudder"]
 
 
+def test_c172p_airspeed_indicator_gets_the_property_its_needle_animates_on():
+    """The c172p's ASI needle rotates on `fdm/jsbsim/velocities/vias-kts`, which
+    its own JSBSim <system> (Systems/indicated-airspeed.xml) produces -- and that
+    system does not run under --fdm=null, so the needle sits at zero however
+    healthy the pitot chain is. Publish calibrated airspeed into it directly.
+    """
+    props = CockpitSync(_fdm(), "c172p").properties()
+    assert props["/fdm/jsbsim/velocities/vias-kts"] == pytest.approx(95.0)
+
+
 def test_an_unknown_aircraft_gets_only_the_generic_properties():
     sync = CockpitSync(_fdm(), "777-200")
     props = sync.properties()
@@ -193,9 +203,18 @@ def test_a_republished_property_the_model_does_not_have_is_skipped():
     assert props["/fdm/jsbsim/fcs/flap-pos-norm"] == pytest.approx(0.25)
 
 
-def test_c172p_republishes_nothing_because_its_panel_asks_for_nothing():
+def test_c172p_uses_no_republish_list_only_a_renamed_asi_property():
+    """The republish mechanism copies a JSBSim property under the same name; the
+    c172p's one gap needs a rename (vc-kts -> vias-kts), so it goes through the
+    cockpit fn instead and the republish tuple stays empty.
+    """
+    from aero_gym.simulators.jsbsim.aircraft import PROFILES
+
+    assert PROFILES["c172p"].republish == ()
     props = CockpitSync(_fdm(), "c172p").properties()
-    assert not [p for p in props if p.startswith("/fdm/jsbsim/")]
+    assert [p for p in props if p.startswith("/fdm/jsbsim/")] == [
+        "/fdm/jsbsim/velocities/vias-kts"
+    ]
 
 
 def test_the_737_stabilizer_moves_with_pitch_trim():

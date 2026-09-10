@@ -57,6 +57,18 @@ def _c172p_cockpit(fdm, controls: dict[str, float]) -> dict[str, object]:
         "/sim/model/c172p/cockpit/yoke-elevator": controls["/controls/flight/elevator"],
         "/sim/model/c172p/cockpit/yoke-aileron": controls["/controls/flight/aileron"],
         "/sim/model/c172p/cockpit/pedals-rudder": controls["/controls/flight/rudder"],
+        # The ASI needle rotates on fdm/jsbsim/velocities/vias-kts, not on
+        # FlightGear's own /instrumentation/airspeed-indicator/indicated-speed-kt:
+        # the c172p ships a JSBSim <system> (Systems/indicated-airspeed.xml) that
+        # runs that reading through a POH calibration table into vias-kts. That
+        # system is part of the *FlightGear* aircraft, so --fdm=null stops it and
+        # the needle sits at zero no matter how healthy the pitot chain is -- the
+        # instrument property is computed correctly and simply goes unread.
+        # Calibrated airspeed is what the table approximates above ~70 kt, so
+        # publish it straight into the property the needle reads. This is the
+        # same class of gap as the 737's republish list, but it needs a rename
+        # rather than a copy, so it lives here.
+        "/fdm/jsbsim/velocities/vias-kts": fdm["velocities/vc-kts"],
     }
 
 

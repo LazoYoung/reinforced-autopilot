@@ -14,10 +14,10 @@ wheels/
 
 # Claude
 .claude/
-.superpowers/
-docs/adr
-docs/superpowers/
 CLAUDE.md
+# Internal documents; top-level docs/*.md is public and tracked
+docs/adr/
+docs/superpowers/
 
 # Training run artifacts
 runs/

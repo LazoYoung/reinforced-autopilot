@@ -43,10 +43,8 @@ class FlightVariable(enum.Enum):
     YAW_RATE = "yaw_rate"
     AOA = "aoa"
     AOS = "aos"
-    # Control positions (observations). Distinct from the ACTION variables
-    # above: those are what the agent commands, these are where the surface
-    # actually is -- command plus trim, which is information the command alone
-    # does not carry.
+    # Control positions: where the surface actually is, command plus trim.
+    # The ACTION variables above are only what the agent commanded.
     ELEVATOR_POS = "elevator_pos"
     AILERON_POS = "aileron_pos"
     RUDDER_POS = "rudder_pos"

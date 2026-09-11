@@ -20,7 +20,7 @@ def _spaces(n: int):
 
 def test_constant_defaults_to_the_middle_action():
     """For any Discrete that is the middle index, and for DeltaAction the middle
-    index is the all-zero-delta action by construction -- which is how the
+    index is the all-zero-delta action by construction, which is how the
     baseline stays a DeltaAction fact without aero_train.algo knowing about it."""
     algo = build_algorithm(_cfg({"type": "constant"}), *_spaces(81))
     assert algo.action == 40
@@ -61,7 +61,7 @@ def test_a_baseline_never_learns_but_still_counts_frames():
 
 def test_a_baseline_round_trips_through_its_state_dict():
     """restored is freshly built, so its global_step is already 0 before
-    load_state_dict runs -- asserting equality against an algo that never
+    load_state_dict runs: asserting equality against an algo that never
     observed anything would pass on a load_state_dict that does nothing.
     Advancing algo's frames first, so the round trip has something to lose,
     is what makes this a real check of load_state_dict rather than 0 == 0."""

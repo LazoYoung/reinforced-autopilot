@@ -43,12 +43,12 @@ def test_a_failed_save_leaves_the_previous_checkpoint_intact(tmp_path, monkeypat
     save_checkpoint(path, {"global_step": 1})
 
     def boom(obj, f, *args, **kwargs):
-        # A disk-full failure doesn't necessarily fail cleanly before writing
-        # anything -- it can fail mid-write, leaving a truncated file at
-        # whatever path it was writing to. Simulate that instead of raising
-        # before any bytes move, which a naive `torch.save(payload, path)`
-        # straight to the destination (no tmp file) would also survive
-        # trivially, since the mock would never touch `path` either way.
+        """Fail mid-write, leaving a truncated file, as a full disk does.
+
+        Raising before any bytes move would be survived trivially even by a
+        naive save straight to the destination, since the mock would never
+        touch the real path either way.
+        """
         with open(f, "wb") as fh:
             fh.write(b"\x00" * 4)
         raise OSError("disk full")
@@ -57,7 +57,7 @@ def test_a_failed_save_leaves_the_previous_checkpoint_intact(tmp_path, monkeypat
     with pytest.raises(OSError):
         save_checkpoint(path, {"global_step": 2})
     # the truncated write landed on the tmp file, which the rename never
-    # promoted -- so the destination still holds the previous good checkpoint
+    # promoted, so the destination still holds the previous good checkpoint
     assert load_checkpoint(path)["global_step"] == 1
 
 
@@ -77,9 +77,8 @@ def test_checkpoint_carries_the_config_and_the_counters(tmp_path):
     assert payload["frames"] == 123
     assert payload["global_step"] == algo.global_step
     assert payload["config"]["run_name"] == "ckpt-run"
-    # nothing in this codebase reads torch's global RNG state back out of a
-    # checkpoint -- DQN.state_dict() already carries everything the learner's
-    # own math depends on -- so the payload must not carry it either
+    # Nothing reads torch's global RNG state back out of a checkpoint;
+    # DQN.state_dict() carries everything the learner's math depends on.
     assert "rng" not in payload
 
 
@@ -100,10 +99,11 @@ def test_best_return_is_persisted_in_the_payload(tmp_path):
 
 
 def test_a_manager_seeded_with_a_prior_best_return_does_not_overwrite_a_better_best(tmp_path):
-    # Simulates cmd_resume: a fresh CheckpointManager pointed at a directory
-    # whose best.pt already reflects a return of 50.0. Without seeding
-    # best_return from the checkpoint, this constructor defaults to -inf and
-    # the very next eval -- however bad -- would beat it and overwrite best.pt.
+    """cmd_resume's case: a fresh manager over a best.pt already worth 50.0.
+
+    Unseeded, the constructor defaults to -inf and the next eval, however bad,
+    beats it and overwrites best.pt.
+    """
     mgr = CheckpointManager(tmp_path, CheckpointConfig(), best_return=50.0)
     algo, cfg = make_algo(), make_cfg()
     written = mgr.save(config=cfg, algo=algo, frames=1, eval_return=10.0)

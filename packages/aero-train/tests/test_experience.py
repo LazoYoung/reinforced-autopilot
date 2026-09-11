@@ -56,7 +56,7 @@ class VaryingActionAgent(Agent):
 
     A stub that hardcodes a constant action, or one that feeds the agent the
     wrong observation, produces a different sequence than the one asserted
-    below -- unlike a constant agent, whose output can't distinguish either
+    below, unlike a constant agent, whose output can't distinguish either
     bug from a correct implementation.
     """
 
@@ -75,8 +75,8 @@ class VaryingActionAgent(Agent):
 class VaryingRewardEnv(CountingEnv):
     """Reward equals the post-step counter, not CountingEnv's constant 1.0.
 
-    CountingEnv's own reward is deliberately constant -- Tasks 9, 10, 15 and
-    17 rely on it for hand-computable n-step sums -- so the variation needed
+    CountingEnv's own reward is deliberately constant (Tasks 9, 10, 15 and
+    17 rely on it for hand-computable n-step sums), so the variation needed
     to make a reward-recording test discriminating lives here instead of in
     conftest.py.
     """
@@ -162,13 +162,11 @@ def test_bootstrap_obs_of_a_terminating_step_is_the_true_final_obs():
 
 
 def test_the_autoreset_row_contributes_no_reward_to_the_segment():
-    # Gymnasium's own NEXT_STEP autoreset already returns reward=0.0 on the
-    # fabricated step, so this mostly pins that fact rather than exercising
-    # collect()'s own `np.where(live, reward, 0.0)` masking. That masking is
-    # kept anyway as the local, explicit statement of the invariant: it
-    # protects a future consumer that reads seg.rewards unmasked (Task 15's
-    # GAE), and it turns a change in Gymnasium's autoreset behaviour into a
-    # loud Segment.__post_init__ error instead of silent corruption.
+    """Mostly pins Gymnasium's NEXT_STEP autoreset, which already returns
+    reward=0.0 on the fabricated step, rather than collect()'s own masking.
+    That masking stays as the local statement of the invariant: it covers a
+    consumer reading seg.rewards unmasked, and turns a change in Gymnasium's
+    behaviour into a loud Segment.__post_init__ error instead of corruption."""
     src = make_source(n_envs=1, episode_len=4)
     seg, _ = src.collect(6)
     assert seg.rewards[:, 0].tolist() == [1.0, 1.0, 1.0, 1.0, 0.0, 1.0]
@@ -241,7 +239,7 @@ class BothFlagsEnv(gym.Env):
 
 
 def test_a_step_that_both_terminates_and_truncates_is_recorded_as_terminated():
-    """Segment forbids both flags on one step, and rightly so -- `truncated`
+    """Segment forbids both flags on one step, and rightly so: `truncated`
     means "bootstrap past this", which is exactly wrong for a terminal state.
     The collector is where the two are reconciled, because an env-level fix
     would not reach gymnasium's TimeLimit.

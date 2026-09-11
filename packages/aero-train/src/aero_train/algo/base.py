@@ -25,7 +25,7 @@ class Algorithm(ABC):
         """Monotonic count of gradient updates applied.
 
         The x-axis of everything logged, and the value a checkpoint resumes
-        from. Not the number of agent steps taken -- that is `frames`.
+        from. Not the number of agent steps taken; that is `frames`.
         """
 
     @abstractmethod
@@ -37,7 +37,7 @@ class Algorithm(ABC):
         """Only what a worker needs for inference.
 
         The policy network and the exploration parameters (under the
-        `selector.` prefix) -- never the critic, the target networks or the
+        `selector.` prefix), never the critic, the target networks or the
         optimizer state.
         """
 

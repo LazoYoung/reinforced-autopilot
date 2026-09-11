@@ -40,7 +40,7 @@ class Simulator(abc.ABC):
 
         The exact inverse of :meth:`set_control`: ``set_control(v, x)`` then
         ``get_control(v)`` must return ``x``. Deliberately not the control's
-        *position*, which on a trimmed aircraft is command plus trim -- feeding
+        *position*, which on a trimmed aircraft is command plus trim; feeding
         a position back in as a command makes the backend add trim a second
         time.
         """

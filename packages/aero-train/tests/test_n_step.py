@@ -48,7 +48,7 @@ def test_n_step_accumulation_stops_at_a_terminal_state():
 def test_truncation_bootstraps_from_the_true_final_observation():
     tr = to_transitions(segment_of(truncate=True), gamma=0.5, n_step=3)
     # terminated stays False through a time limit, so the value function
-    # bootstraps -- and it bootstraps from the real final state, 4.0
+    # bootstraps, and from the real final state, 4.0
     assert tr.terminated.tolist() == [False] * len(tr)
     assert tr.next_obs[1, 0] == 4.0
 
@@ -86,7 +86,7 @@ def _hand_built_segment(terminated_row: int, truncated_row: int | None = None):
     to_transitions' segment.valid[j, b] check alone would stop accumulation
     there regardless of the terminated/truncated break statements below it.
     But Segment.__post_init__ does not forbid a valid row after a terminal
-    one -- only an *invalid* terminal/truncated row is rejected -- so a
+    one (only an *invalid* terminal/truncated row is rejected), so a
     hand-built (or, per Task 12, replay-buffer-concatenated) segment can have
     one. Rewards are 1.0, 1.0, 100.0 so that a cross-episode n-step sum
     (2.0 -> 102.0) is unmistakable rather than off by a hard-to-notice amount.
@@ -124,9 +124,8 @@ def test_n_step_return_does_not_cross_a_truncation_boundary():
 
 
 def test_to_transitions_on_an_all_invalid_segment_keeps_trailing_dims():
-    # every row masked invalid (e.g. a pending autoreset never followed by a
-    # real step); the resulting arrays must still carry obs_dim / act_shape
-    # so Task 12 can concatenate this Transitions with a non-empty one.
+    # Every row masked invalid, as a pending autoreset with no real step after
+    # it is. The arrays must keep obs_dim / act_shape to stay concatenable.
     obs = np.zeros((2, 1, 3), np.float32)
     actions = np.zeros((1, 1), np.int64)
     rewards = np.zeros((1, 1), np.float32)

@@ -124,9 +124,8 @@ def test_the_box_follows_the_features_not_the_variables(initial_conditions, fake
     env = AeroGymEnv(scenario, simulator=fake_simulator)
     assert env.observation_space.low.tolist() == [-500.0, -75.0]
 
-    # reset() first, since FakeSimulator.reset() re-applies the scenario's
-    # initial altitude every call; setting state has to happen after, and
-    # step() (unlike reset()) reads it back without re-establishing it.
+    # reset() first: it re-applies the scenario's initial altitude every call,
+    # while step() reads the state back without re-establishing it.
     env.reset(seed=0)
     fake_simulator.state[V.ALTITUDE] = 5200.0
     fake_simulator.state[V.ROLL] = 3.0

@@ -45,6 +45,25 @@ class JSBSimSimulator(Simulator):
         return self._dt
 
     def reset(self, scenario: Scenario) -> None:
+        """Put the FDM at the scenario's initial condition, engines running.
+
+        Episodes from the same seed are bit-identical, because the FDM is
+        discarded and rebuilt each time: ``run_ic()`` restores the flight
+        condition but not engine state (rpm, manifold pressure, thrust), which
+        otherwise carries into the next episode. A rebuild costs ~1.1 ms.
+
+        Visualization suspends that. ``CockpitSync`` binds to one FDM for its
+        lifetime and the output directive is rewritten on every build, so with a
+        viewer (or with output configured but no viewer) the instance is
+        reused and only the controls are cleared. Reset determinism is therefore
+        a function of ``render_mode``, and a *training* run configured with a
+        viewer is not reproducible. Eval is unaffected: ``cli._train`` strips
+        ``render_mode`` from the eval env factory.
+
+        Returns only once a full agent step has been simulated, so the first
+        observation reports settled positions rather than the zeros JSBSim holds
+        until ``run()`` is called.
+        """
         ic = scenario.initial_conditions
         profile = profile_for(scenario.aircraft)
         # observe() resolves per-aircraft property overrides through it
@@ -61,33 +80,8 @@ class JSBSimSimulator(Simulator):
                 heading_deg=ic.heading_deg,
             )
         if self._viewer is None and self._visualization is None:
-            # run_ic() restores the flight condition but not the whole model:
-            # engine state (rpm, manifold pressure, thrust) carries across it,
-            # so two episodes from the same seed diverge even with identical
-            # controls. Measured on the c172p: back-to-back resets differ by
-            # 1.56 in the observation vector, and a do-nothing episode 2 sees a
-            # pitch rate of +1.37 deg/s where episode 1 saw -0.54. Discarding
-            # the FDM makes them bit-identical, and costs ~1.1 ms per episode
-            # (0.1 -> 1.2 ms) -- a few seconds across a full training run.
-            #
-            # Not done while a viewer is attached: CockpitSync captures the FDM
-            # once (guarded by _viewer_synced) and _ensure_fdm rewrites the
-            # FlightGear output directive on every build, so rebuilding under a
-            # live cockpit would leave the sync bound to a dead FDM.
-            #
-            # `_visualization` is checked as well as `_viewer`, because output
-            # can be configured without one: enable_visualization(
-            # launch_flightgear=False) streams to an already-running FlightGear,
-            # and close() clears the viewer but keeps the output settings. Every
-            # rebuild re-applies the output directive, which restarts the UDP
-            # stream mid-session and writes a fresh temp file.
-            #
-            # Visualization is an interactive path where episode-to-episode
-            # determinism buys nothing; the control clear below is what keeps
-            # that path honest. Note this makes reset determinism a function of
-            # render_mode -- a *training* run configured with a viewer is not
-            # reproducible. Eval is unaffected: cli._train strips render_mode
-            # from the eval env factory.
+            # Discarded, not reset: see the determinism contract above.
+            # `_visualization` too, since output can be configured without a viewer.
             self._fdm = None
         fdm = self._ensure_fdm(scenario.aircraft)
         fdm["ic/lat-geod-deg"] = ic.latitude_deg
@@ -102,35 +96,21 @@ class JSBSimSimulator(Simulator):
         fdm["ic/r-rad_sec"] = 0.0
         if not fdm.run_ic():
             raise SimulatorError("JSBSim failed to initialize the requested flight condition")
-        # run_ic() leaves the FCS command properties alone, so whenever the FDM
-        # is reused -- the viewer path above -- episode N+1 would start holding
-        # whatever stick and rudder episode N ended on, and the aircraft would
-        # visibly jerk at the start of every episode. Redundant after a rebuild
-        # (a fresh FDM commands nothing) and cheap, so it runs unconditionally.
-        # Written through set_control so the properties cleared are exactly the
-        # ones the agent can write, per-engine throttles included.
+        # run_ic() leaves the FCS commands alone, so a reused FDM would start
+        # episode N+1 holding episode N's stick. Via set_control to match its keys.
         for var in CONTROL_MAP:
             self.set_control(var, 0.0)
-        # Start with the engine(s) running and the aircraft's own controls set,
-        # so it is flyable from the first step. After the clear above, so the
-        # profile's commands win.
+        # Flyable from the first step. After the clear above, so the profile wins.
         fdm["propulsion/set-running"] = -1
         for prop, value in profile.startup.items():
             fdm[prop] = value
-        # JSBSim recomputes fcs/*-pos-norm only inside run(), so right now every
-        # position property still reads 0 while the commands above say 0.7.
-        # Settling one agent step's worth of physics costs 0.1 s of simulated
-        # time -- a few feet of altitude at cruise -- and buys a first
-        # observation that is true. Measured on the c172p: after 12 steps
-        # fcs/throttle-pos-norm reads 0.7 against a commanded 0.7 (the profile
-        # has no fcs/elevator-cmd-norm, only fcs/pitch-trim-cmd-norm = 0.2,
-        # which fcs/elevator-pos-norm converges toward instead).
+        # JSBSim recomputes fcs/*-pos-norm only inside run(), so until one agent
+        # step has settled every position property reads 0 against a live command.
         for _ in range(max(1, round(1.0 / (self._dt * scenario.agent_hz)))):
             self.run()
         if self._viewer is not None and not self._viewer_synced:
-            # Don't start the episode while FlightGear is still on its splash
-            # screen — nothing would be visualized. Warns and proceeds headless
-            # if FlightGear never becomes ready.
+            # Nothing renders while FlightGear is still on its splash screen.
+            # wait_until_ready() warns and proceeds headless if it never comes up.
             if self._viewer.wait_until_ready():
                 self._start_cockpit_sync(fdm)
             self._viewer_synced = True
@@ -199,9 +179,8 @@ class JSBSimSimulator(Simulator):
         try:
             value = float(self._require_fdm()[mapping.prop])
         except KeyError as exc:
-            # JSBSim's own message names only the property. Naming the variable
-            # and pointing at the profile is what turns this from a mystery
-            # hundreds of steps into a rollout into a one-line fix.
+            # JSBSim's own message names only the property; naming the variable
+            # and the profile is what makes this a one-line fix mid-rollout.
             raise SimulatorError(
                 f"{var.name} needs JSBSim property {mapping.prop!r}, which model "
                 f"{self._aircraft!r} does not publish; add an observation_props "
@@ -273,9 +252,8 @@ class JSBSimSimulator(Simulator):
 
     def _apply_output_directive(self) -> None:
         assert self._visualization is not None
-        # close() unlinks only the newest path, so without this every re-apply
-        # -- a rebuild for a different aircraft, or another
-        # enable_visualization -- would strand its predecessor in the temp dir.
+        # close() unlinks only the newest path, so each re-apply must unlink its
+        # own predecessor or strand it in the temp dir.
         if self._directive_path is not None:
             self._directive_path.unlink(missing_ok=True)
             self._directive_path = None

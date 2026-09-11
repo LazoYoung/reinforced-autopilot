@@ -39,7 +39,7 @@ def build_algorithm(
 ) -> Algorithm:
     """Construct the configured algorithm, validating it against the env's spaces.
 
-    This is where "DQN against a continuous action space" is caught -- the check
+    This is where "DQN against a continuous action space" is caught: the check
     needs the env, so it cannot live in config validation.
     """
     if isinstance(cfg.algo, DQNConfig):

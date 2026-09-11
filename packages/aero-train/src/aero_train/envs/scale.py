@@ -16,7 +16,7 @@ class ScaleObservation(gym.ObservationWrapper):
     function of the space, so resume is exact by construction.
 
     This only works because the scenario's features carry bounds that mean
-    something -- the raw canonical bound on altitude is [-1500, 85000], against
+    something: the raw canonical bound on altitude is [-1500, 85000], against
     which a level-flight task is a rounding error.
     """
 
@@ -35,7 +35,7 @@ class ScaleObservation(gym.ObservationWrapper):
             raise ValueError(
                 f"ScaleObservation needs finite bounds; indices "
                 f"{unbounded.tolist()} are infinite. A feature with no "
-                "meaningful range cannot be scaled -- bound it in the scenario."
+                "meaningful range cannot be scaled; bound it in the scenario."
             )
         degenerate = np.flatnonzero(high <= low)
         if degenerate.size:

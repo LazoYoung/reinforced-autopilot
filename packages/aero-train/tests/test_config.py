@@ -73,9 +73,8 @@ def test_total_steps_below_warmup_raises():
 
 
 def test_warmup_above_buffer_size_raises():
-    # warmup_frames > buffer_size means len(buffer) can never reach warmup_frames
-    # -- the ring buffer caps at buffer_size -- so update() would return None
-    # forever and the run would silently never take a gradient step.
+    # The ring caps at buffer_size, so len(buffer) never reaches warmup_frames:
+    # update() returns None forever and the run takes no gradient step.
     with pytest.raises(ValueError, match="warmup_frames cannot exceed"):
         config_from_dict(
             {**MINIMAL, "algo": {"type": "dqn", "buffer_size": 100, "warmup_frames": 200}}
@@ -115,10 +114,8 @@ def test_malformed_override_raises():
 
 @pytest.mark.parametrize("spelling", ["1e-3", "5e-4", "1E-3", "1e3", "-1e-3"])
 def test_overrides_coerce_bare_exponent_notation_to_float(spelling):
-    # PyYAML is YAML 1.1, whose float grammar requires a decimal point before
-    # the exponent, so yaml.safe_load(spelling) alone returns a str here. This
-    # is exactly the spelling anyone types for a learning-rate sweep --
-    # DQNConfig.lr defaults to 5e-4 -- so apply_overrides must coerce it itself.
+    # PyYAML is YAML 1.1: its float grammar wants a decimal point before the
+    # exponent, so safe_load returns a str and apply_overrides must coerce.
     data = apply_overrides(MINIMAL, [f"algo.lr={spelling}"])
     assert isinstance(data["algo"]["lr"], float)
     assert data["algo"]["lr"] == pytest.approx(float(spelling))
@@ -180,9 +177,8 @@ def test_env_needs_exactly_one_of_id_and_scenario():
 def test_scenario_only_settings_are_rejected_on_the_gymnasium_branch():
     from aero_train.config import EnvConfig
 
-    # match=rf"env\.{name}" rather than the shared "aero_gym scenario" suffix
-    # every branch of this rejection shares -- otherwise a message that names
-    # the wrong offending field would still satisfy the assertion.
+    # Matched on the field name, not the "aero_gym scenario" suffix every branch
+    # shares, so a message naming the wrong field cannot satisfy it.
     for name, kwargs in (
         ("render_mode", {"render_mode": "flightgear"}),
         ("scenario_kwargs", {"scenario_kwargs": {"aircraft": "737"}}),
@@ -211,10 +207,8 @@ def test_render_mode_and_delta_are_validated():
 def test_a_scenario_env_round_trips_through_a_config_dict():
     from aero_train.config import config_from_dict, config_to_dict
 
-    # render_mode and delta are given non-default values on purpose: a round
-    # trip that silently dropped either back to its default would still pass
-    # an equality check seeded with the defaults, the same blind spot
-    # test_yaml_round_trip exists to close for the rest of TrainConfig.
+    # Non-default on purpose: a round trip that dropped either back to its
+    # default would still pass an equality check seeded with the defaults.
     cfg = config_from_dict(
         {
             "run_name": "flight",
@@ -253,7 +247,7 @@ def test_flightgear_needs_exactly_one_environment_in_total():
 def test_the_three_steady_flight_configs_fly_the_identical_task():
     """dqn/random/constant_steady_flight.yaml exist to be compared against each
     other; a baseline flown on a different env or a different rollout topology
-    would not be a baseline. Parsing all three is not enough to show that --
+    would not be a baseline. Parsing all three is not enough to show that:
     this compares the actual env: and rollout: dataclasses field by field, so a
     config drifting out of sync fails here instead of silently producing an
     uncomparable curve in MLflow."""
@@ -265,9 +259,8 @@ def test_the_three_steady_flight_configs_fly_the_identical_task():
         assert dataclasses.asdict(dqn.env) == dataclasses.asdict(other.env)
         assert dataclasses.asdict(dqn.rollout) == dataclasses.asdict(other.rollout)
 
-    # And the configs must actually differ on the one thing they're supposed
-    # to: which algorithm flies. Otherwise the equality checks above could
-    # pass trivially against three copies of the same file.
+    # They must still differ on which algorithm flies, or the equality checks
+    # above pass trivially against three copies of one file.
     assert dqn.algo.type == "dqn"
     assert random_.algo.type == "random"
     assert constant.algo.type == "constant"

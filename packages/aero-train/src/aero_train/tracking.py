@@ -195,19 +195,15 @@ class MLflowTracker(Tracker):
     """
 
     def __init__(self, cfg: TrainConfig) -> None:
-        # mlflow>=3 refuses the filesystem backend ("maintenance mode") unless
-        # explicitly opted into, but the local `./mlruns` file store is this
-        # project's documented default backing store -- see the module and
-        # class docstrings on the migration story. These are process-wide
-        # environment defaults, set lazily on first tracker construction
-        # rather than at import time; `setdefault` is deliberate so an
-        # explicit environment setting (e.g. a real MLFLOW_ALLOW_FILE_STORE
-        # policy on a shared host) always wins over this default.
-        #
-        # mlflow also logs a one-time "agent hint" on import/run-creation when
-        # it detects it is being driven by a coding agent. It is emitted via
-        # `logging`, not `warnings.warn`, so it never reaches pytest's warning
-        # summary -- but it is still noise with nothing to act on here.
+        """Start an MLflow run, opting the process into the file store.
+
+        mlflow>=3 refuses the filesystem backend as "maintenance mode" unless
+        opted into, and separately logs a one-time coding-agent hint through
+        `logging` (so pytest's warning summary never shows it). Both are
+        silenced with process-wide environment defaults, set here on first
+        construction rather than at import time. `setdefault` is deliberate: a
+        real policy already in the environment has to win over this default.
+        """
         import os
 
         os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
@@ -219,12 +215,8 @@ class MLflowTracker(Tracker):
         if cfg.tracking.tracking_uri:
             mlflow.set_tracking_uri(cfg.tracking.tracking_uri)
         elif not os.environ.get("MLFLOW_TRACKING_URI"):
-            # Neither the config nor the environment redirected us, so pin the
-            # documented default explicitly. mlflow's own hard-coded fallback
-            # is no longer a `./mlruns` file store in the installed version --
-            # it is a `sqlite:///mlflow.db` file in the cwd, which is not
-            # gitignored (only `mlruns/` is) and would land an untracked
-            # binary in the repo root the first time this runs unconfigured.
+            # Pinned: mlflow's own fallback is now `sqlite:///mlflow.db` in the
+            # cwd: an untracked binary in the repo root; only `mlruns/` is not.
             mlflow.set_tracking_uri("file:./mlruns")
         mlflow.set_experiment(cfg.tracking.experiment)
         self._run = mlflow.start_run(run_name=cfg.run_name)
@@ -237,9 +229,8 @@ class MLflowTracker(Tracker):
         self._mlflow.log_params({**flatten_config(cfg), **library_versions()})
 
     def log_metrics(self, metrics: dict[str, float], step: int) -> None:
-        # Guard against an empty dict: a caller that logs whatever metrics an
-        # iteration happened to produce (e.g. none, before warmup) shouldn't
-        # have to check for that itself before calling in.
+        # A caller logging whatever an iteration produced (nothing, before
+        # warmup) shouldn't have to check for empty itself.
         if metrics:
             self._mlflow.log_metrics(metrics, step=step)
 
@@ -253,8 +244,8 @@ class MLflowTracker(Tracker):
 def library_versions() -> dict[str, str]:
     """Versions of the libraries a run's results depend on.
 
-    aero_gym owns the canonical units contract -- the bounds in ACTION_SPECS and
-    the pilot sign convention -- so a run recorded without its version cannot be
+    aero_gym owns the canonical units contract (the bounds in ACTION_SPECS and
+    the pilot sign convention), so a run recorded without its version cannot be
     compared against one taken after a release that changed either. Same
     reasoning as logging the topology beside the seed: the seed alone does not
     identify a run.
@@ -271,8 +262,8 @@ def library_versions() -> dict[str, str]:
 
 
 def build_tracker(cfg: TrainConfig) -> Tracker:
-    """`enabled` governs MLflow, `console` governs stdout -- independently,
-    because a run with MLflow off is the one whose only output is the terminal."""
+    """`enabled` governs MLflow, `console` governs stdout, independently:
+    a run with MLflow off is the one whose only output is the terminal."""
     trackers: list[Tracker] = []
     if cfg.tracking.console:
         trackers.append(ConsoleTracker(cfg))

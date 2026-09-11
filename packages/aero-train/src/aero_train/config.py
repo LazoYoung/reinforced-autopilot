@@ -30,7 +30,7 @@ class EnvConfig:
     A field rather than a prefix on `id` for two reasons. Gymnasium's make()
     already documents and implements "module:Env-v0" as "import module, then
     make Env-v0", so an id like "aero_gym:steady_flight" is a valid Gymnasium
-    id meaning something else -- reusing it would mean a removed branch check
+    id meaning something else; reusing it would mean a removed branch check
     silently does something almost-right instead of failing. And a prefix would
     force this validation to parse a string to know which rules apply, when the
     point of this module is that nothing downstream parses.
@@ -75,7 +75,7 @@ class EnvConfig:
         if "max_episode_steps" in self.scenario_kwargs:
             raise ValueError(
                 "set the episode limit with env.max_episode_steps, not inside "
-                "env.scenario_kwargs -- one setting, one place"
+                "env.scenario_kwargs: one setting, one place"
             )
 
 
@@ -96,9 +96,8 @@ class DQNConfig:
     epsilon_decay_frames: int = 20_000
 
     def __post_init__(self) -> None:
-        # Reject non-ints before coercing, so a float like 3.7 fails loudly instead
-        # of being silently truncated into a network with the wrong layer widths.
-        # bool is a subclass of int in Python, so True/False must be excluded too.
+        # Rejected before coercion, so 3.7 fails loudly instead of silently
+        # becoming a different layer width. bool subclasses int, hence the guard.
         if any(isinstance(h, bool) or not isinstance(h, int) for h in self.hidden_sizes):
             raise ValueError("algo.hidden_sizes must be a non-empty list of positive ints")
         # YAML gives a list; the rest of the code wants an immutable tuple
@@ -114,9 +113,8 @@ class DQNConfig:
         if self.warmup_frames < self.batch_size:
             raise ValueError("algo.warmup_frames must be at least algo.batch_size")
         if self.warmup_frames > self.buffer_size:
-            # the ring buffer caps at buffer_size, so len(buffer) could never
-            # reach a larger warmup_frames -- update() would return None forever
-            # and the run would silently never take a gradient step
+            # The ring caps at buffer_size, so len(buffer) never reaches a larger
+            # warmup_frames: update() returns None forever, and nothing trains.
             raise ValueError("algo.warmup_frames cannot exceed algo.buffer_size")
         if not self.epsilon_final <= self.epsilon_start:
             raise ValueError("algo.epsilon_final must not exceed algo.epsilon_start")
@@ -310,12 +308,8 @@ def apply_overrides(data: dict[str, Any], overrides: Sequence[str]) -> dict[str,
                 raise ValueError(f"override path {dotted!r} traverses a non-mapping value")
         parsed = yaml.safe_load(raw)
         if isinstance(parsed, str):
-            # PyYAML implements YAML 1.1, whose float grammar requires a decimal
-            # point before the exponent -- so "1e-3" parses as the string "1e-3",
-            # not the float 0.001. That spelling is exactly how anyone types a
-            # learning-rate override (the DQN default is 5e-4), so without this
-            # fallback the value reaches __post_init__ as a str and fails an
-            # unrelated numeric comparison instead of being accepted normally.
+            # PyYAML is YAML 1.1: its float grammar wants a decimal point before
+            # the exponent, so "1e-3" (how anyone types an lr) parses as str.
             try:
                 parsed = float(parsed)
             except (TypeError, ValueError):
@@ -336,7 +330,7 @@ def flatten_config(cfg: TrainConfig) -> dict[str, str]:
     """Dotted, stringified config for MLflow params.
 
     Topology (n_workers, envs_per_worker, frames_per_iter) is included because a
-    seed alone does not identify a run — changing the topology changes how the
+    seed alone does not identify a run: changing the topology changes how the
     random streams are partitioned.
     """
 

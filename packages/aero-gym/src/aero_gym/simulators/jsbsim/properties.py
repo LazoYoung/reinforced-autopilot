@@ -60,12 +60,8 @@ OBSERVATION_MAP: dict[FlightVariable, ObservationMapping] = {
     # Negated for the same reason the commands are: JSBSim's positive elevator
     # pitches the nose down and its positive rudder yaws left.
     FlightVariable.ELEVATOR_POS: ObservationMapping("fcs/elevator-pos-norm", _negate),
-    # Not fcs/aileron-pos-norm: JSBSim's standard aileron FCS publishes a
-    # left/right surface pair and no combined property, so that name is in
-    # neither the c172p's catalog nor the 737's. The left surface is the one
-    # that follows a roll-right command with a positive value on both (the
-    # 737's right aileron reads its negation), so it already speaks the
-    # canonical sign.
+    # Not fcs/aileron-pos-norm: the standard FCS publishes a left/right pair and
+    # no combined property. The left surface already carries the canonical sign.
     FlightVariable.AILERON_POS: ObservationMapping("fcs/left-aileron-pos-norm", _identity),
     FlightVariable.RUDDER_POS: ObservationMapping("fcs/rudder-pos-norm", _negate),
     # Engine 0. The agent commands every engine identically (per_engine above),

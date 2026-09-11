@@ -49,9 +49,8 @@ def _obs(scenario, overrides=None):
 
 
 def _evaluate(scenario, overrides=None):
-    # A plain dict, not **kwargs: the override keys are FlightVariable members,
-    # and CPython's call-unpacking requires str keys, so `**overrides` would
-    # raise TypeError here regardless of the callee's signature.
+    # A plain dict, not **kwargs: the keys are FlightVariable members, and
+    # CPython's call-unpacking requires str keys whatever the callee accepts.
     obs = _obs(scenario, overrides)
     return scenario.reward_fn(Transition(prev_obs=obs, obs=obs, action={}))
 
@@ -80,13 +79,8 @@ def test_the_corner_of_the_band_scores_zero_and_does_not_terminate():
 @pytest.mark.parametrize(
     "overrides",
     [
-        # Margins are literal, not `ALTITUDE_BAND_FT + 1.0` etc: if the offset
-        # were computed from the same constant the reward_fn uses, mutating
-        # that constant would move the test input and the pass/fail boundary
-        # together, and the test could never notice a wrong band value (the
-        # ratio stays > 1 for any positive band). Literal 501/281/1001 pin the
-        # input to the *intended* 500/10/1000 bands so a mutated constant
-        # actually moves the boundary relative to a fixed input.
+        # Literal margins: an offset computed from the constant reward_fn uses
+        # would move the input and the pass/fail boundary together.
         {V.ALTITUDE: 5501.0},  # 5000 target + 500 ft band + 1
         {V.ALTITUDE: 4499.0},  # 5000 target - 500 ft band - 1
         {V.HEADING: 281.0},  # 270 target + 10 deg band + 1
@@ -104,7 +98,7 @@ def test_each_limit_terminates_on_its_own(overrides):
 
 def test_the_floor_terminates_on_its_own():
     """Against the default 5000 ft target, V.ALTITUDE: 999.0 fires the band
-    term (alt = 4001/500) before it ever reaches FLOOR_ALTITUDE_FT -- that
+    term (alt = 4001/500) before it ever reaches FLOOR_ALTITUDE_FT, and that
     case would silently duplicate the band's lower-edge case above and never
     exercise the floor clause. A scenario with a low target altitude (the
     case the floor's code comment says it exists for) puts 999.0 comfortably
@@ -176,7 +170,7 @@ def _feature(scenario, name):
 
 
 def test_altitude_error_feature_computes_actual_minus_target():
-    """The lambda, not just its name and bounds -- a feature that leaked the
+    """The lambda, not just its name and bounds: a feature that leaked the
     absolute altitude instead of the error would pass every other test here."""
     scenario = make_steady_flight_scenario()  # c172p cruise target: 5000.0 ft
     altitude_error_ft = _feature(scenario, "altitude_error_ft")

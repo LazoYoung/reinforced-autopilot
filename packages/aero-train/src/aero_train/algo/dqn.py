@@ -98,7 +98,7 @@ class DQN(Algorithm):
         """The one place the Q-network architecture is named.
 
         Both __init__ and make_agent go through it, so a variant that changes
-        only the architecture -- Dueling DQN's value/advantage heads, say -- is
+        only the architecture (Dueling DQN's value/advantage heads, say) is
         a subclass overriding this method and nothing else.
         """
         return mlp(int(np.prod(self.obs_shape)), self.cfg.hidden_sizes, self.n_actions)
@@ -157,10 +157,8 @@ class DQN(Algorithm):
             self._global_step += 1
             if self._global_step % self.cfg.target_sync_interval == 0:
                 self.target.sync()
-            # .item(), not float(): loss and q_taken still require grad here, and
-            # float() on a tensor with requires_grad=True warns even though the
-            # graph is already freed by backward() above and only the number
-            # survives either way.
+            # .item(), not float(): both still require grad here, and float()
+            # warns on such a tensor though backward() already freed the graph.
             losses.append(loss.item())
             q_means.append(q_taken.mean().item())
             grad_norms.append(float(grad_norm))
@@ -183,7 +181,7 @@ class DQN(Algorithm):
         `steps` rather than a fixed n because accumulation stops early at an
         episode end or a segment edge. `terminated` rather than any notion of
         `done`: a time-limited transition arrives here with terminated=False and
-        next_obs set to the true final state, so it bootstraps -- which is the
+        next_obs set to the true final state, so it bootstraps, which is the
         correct treatment and the one PTAN's conflated `done` gets wrong.
         """
         next_obs = torch.as_tensor(batch.next_obs, dtype=torch.float32, device=self.device)
@@ -196,11 +194,8 @@ class DQN(Algorithm):
             return returns + (self.cfg.gamma**steps) * next_q
 
     def state_dict(self) -> dict[str, Any]:
-        # deepcopy, not the raw state dicts: nn.Module.state_dict() detaches
-        # each tensor but does not clone it, so it aliases the same storage as
-        # the live parameter -- training on past this snapshot would move the
-        # numbers inside it too. Same class of bug as ReplayBuffer.state_dict,
-        # fixed the same way there.
+        """A frozen snapshot, deepcopied because nn.Module.state_dict() detaches
+        each tensor without cloning it and so aliases live parameter storage."""
         return {
             "net": copy.deepcopy(self.net.state_dict()),
             "target": copy.deepcopy(self.target.target_model.state_dict()),

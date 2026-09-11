@@ -96,7 +96,7 @@ def test_an_unlisted_aircraft_has_no_overrides():
 
 
 def test_control_positions_are_negated_exactly_like_the_commands():
-    """Same convention mismatch, same fix -- so a commanded canonical value and
+    """Same convention mismatch, same fix, so a commanded canonical value and
     the resulting canonical position share a sign."""
     from aero_gym.simulators.jsbsim.properties import CONTROL_MAP, OBSERVATION_MAP
     from aero_gym.variables import ACTION_POSITION

@@ -108,15 +108,13 @@ class AeroGymEnv(gym.Env):
         trim (the c172p resets with elevator-cmd 0.0, pitch-trim 0.2 and so
         elevator-pos ~0.2), and an action is a command. Seeding the accumulator
         from the position would hand that trim back to set_control, which JSBSim
-        then adds to trim a second time -- measured as a 1200 fpm sink and an
+        then adds to trim a second time, measured as a 1200 fpm sink and an
         8-step episode under a do-nothing policy. Observing *position* remains
         the right choice for observations (see docs/adr/0003); this is the
         action seed, which is a different question with the opposite answer.
         """
-        # get_control, indexed directly by the backend: a future action
-        # variable with no control mapping should raise KeyError naming it, the
-        # same fail-loud choice observe() makes for a missing property, rather
-        # than silently seeding DeltaAction's accumulator with a wrong 0.0.
+        # get_control, so an action variable with no control mapping raises
+        # KeyError naming it rather than seeding the accumulator with a wrong 0.0.
         values = [self.simulator.get_control(var) for var in self.scenario.action_variables]
         return np.clip(
             np.array(values, np.float32), self.action_space.low, self.action_space.high

@@ -1,7 +1,7 @@
 """Uniform experience replay over flat transitions.
 
 Segments arrive from the rollout engine and are flattened on insert by
-to_transitions -- the one place in the codebase where that reshape happens.
+to_transitions, the one place in the codebase where that reshape happens.
 Prioritized replay is a Phase 2+ concern.
 """
 
@@ -58,9 +58,8 @@ class ReplayBuffer:
             )
             n = self.capacity
         idx = (self._pos + np.arange(n)) % self.capacity
-        # Copy (not alias) into the preallocated arrays: fancy indexing with an
-        # ndarray index already copies, so the caller's Transitions stays
-        # independent of what the buffer stores.
+        # Fancy indexing with an ndarray index copies, so the caller's
+        # Transitions stays independent of what the buffer stores.
         self._obs[idx] = tr.obs
         self._next_obs[idx] = tr.next_obs
         self._actions[idx] = tr.actions
@@ -86,9 +85,8 @@ class ReplayBuffer:
         )
 
     def state_dict(self) -> dict[str, Any]:
-        # Copy every array out: the caller may go on to add() to this buffer,
-        # or to another buffer restored from this same dict, and neither of
-        # those should be able to mutate what's meant to be a frozen snapshot.
+        """A frozen snapshot. Every array is copied out, so neither a later
+        add() here nor one on a buffer restored from this dict can move it."""
         return {
             "obs": self._obs.copy(),
             "next_obs": self._next_obs.copy(),
@@ -101,10 +99,8 @@ class ReplayBuffer:
         }
 
     def load_state_dict(self, sd: dict[str, Any]) -> None:
-        # np.asarray is a no-op (returns the same object) when the input is
-        # already an ndarray, so this must copy explicitly -- otherwise this
-        # buffer and the dict's source end up sharing storage, and add() on
-        # either one silently corrupts the other.
+        # Copied explicitly, because np.asarray returns an existing ndarray
+        # unchanged and this buffer would then share storage with sd's source.
         self._obs = np.array(sd["obs"], copy=True)
         self._next_obs = np.array(sd["next_obs"], copy=True)
         self._actions = np.array(sd["actions"], copy=True)

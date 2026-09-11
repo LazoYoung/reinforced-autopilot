@@ -1,8 +1,8 @@
 """What aero_gym needs to know about an aircraft beyond its JSBSim model.
 
 The JSBSim model name is the key: it is what a :class:`~aero_gym.scenario.Scenario`
-carries, and everything else an aircraft needs -- what FlightGear calls it, how
-its engines and controls start, what its cockpit reads -- hangs off it here, so
+carries, and everything else an aircraft needs (what FlightGear calls it, how
+its engines and controls start, what its cockpit reads) hangs off it here, so
 adding an aircraft means editing one file.
 """
 
@@ -46,7 +46,7 @@ class AircraftProfile:
     override today, because the base map already names a surface both models
     publish; an aircraft whose FCS exposes a different one would. A full
     ObservationMapping rather than a bare property name, because a substituted
-    surface need not share the sign of the one it replaces -- the 737's right
+    surface need not share the sign of the one it replaces: the 737's right
     aileron reads the negation of its left.
     """
 
@@ -57,25 +57,14 @@ def _c172p_cockpit(fdm, controls: dict[str, float]) -> dict[str, object]:
         "/sim/model/c172p/cockpit/yoke-elevator": controls["/controls/flight/elevator"],
         "/sim/model/c172p/cockpit/yoke-aileron": controls["/controls/flight/aileron"],
         "/sim/model/c172p/cockpit/pedals-rudder": controls["/controls/flight/rudder"],
-        # The ASI needle rotates on fdm/jsbsim/velocities/vias-kts, not on
-        # FlightGear's own /instrumentation/airspeed-indicator/indicated-speed-kt:
-        # the c172p ships a JSBSim <system> (Systems/indicated-airspeed.xml) that
-        # runs that reading through a POH calibration table into vias-kts. That
-        # system is part of the *FlightGear* aircraft, so --fdm=null stops it and
-        # the needle sits at zero no matter how healthy the pitot chain is -- the
-        # instrument property is computed correctly and simply goes unread.
-        # Calibrated airspeed is what the table approximates above ~70 kt, so
-        # publish it straight into the property the needle reads. This is the
-        # same class of gap as the 737's republish list, but it needs a rename
-        # rather than a copy, so it lives here.
+        # The ASI needle reads vias-kts, filled by a c172p JSBSim <system> that
+        # --fdm=null stops; calibrated airspeed is what its table approximates.
         "/fdm/jsbsim/velocities/vias-kts": fdm["velocities/vc-kts"],
     }
 
 
-# Half the 737's 0-17 unit trim-wheel range. JSBSim's stock 737 has no
-# stabilizer channel at all, so the wheel is driven from pitch trim: nose-up is
-# negative to JSBSim and more units to a 737 pilot. The direction is right; the
-# calibration is a visual approximation, not a real stab schedule.
+# Half the 737's 0-17 unit trim-wheel range. The stock JSBSim 737 has no
+# stabilizer channel, so this drives the wheel from pitch trim, approximately.
 _STAB_UNITS_SPAN = 8.5
 
 

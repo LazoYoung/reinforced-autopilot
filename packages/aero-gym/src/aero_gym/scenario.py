@@ -113,10 +113,8 @@ class Scenario:
         if self.agent_hz <= 0:
             raise ValueError("agent_hz must be positive")
         if not self.observation_features:
-            # A scenario that says nothing about features gets the old behavior:
-            # the Box is the observed variables, in order, at their canonical
-            # bounds. Filling it here rather than branching in the env means
-            # AeroGymEnv only ever reads observation_features.
+            # Default: the observed variables, in order, at canonical bounds.
+            # Filled here so AeroGymEnv only ever reads observation_features.
             object.__setattr__(
                 self,
                 "observation_features",

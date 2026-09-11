@@ -37,10 +37,8 @@ def test_length_is_capped_at_capacity():
 
 
 def test_length_is_capped_at_capacity_across_incremental_adds():
-    # A single add() larger than capacity is truncated on its own (see
-    # test_length_is_capped_at_capacity), which can mask a buffer that fails
-    # to cap its size when the overflow instead arrives via several adds that
-    # are each individually within capacity.
+    """An oversized add() is truncated on its own, which can mask a buffer that
+    fails to cap itself when the overflow arrives across several small adds."""
     buf = ReplayBuffer(4, (1,))
     for _ in range(5):
         buf.add(transitions([1.0, 2.0]))
@@ -48,12 +46,12 @@ def test_length_is_capped_at_capacity_across_incremental_adds():
 
 
 def _enumerate_sampled_values(buf, draws=200):
-    # sample() rightly refuses batch_size > len(buf) (see
-    # test_sampling_more_than_is_stored_raises), so exhaustive-coverage checks
-    # must draw repeatedly at a valid batch size rather than in one oversized
-    # call. Many draws of len(buf) samples still reaches full coverage of the
-    # stored values by the birthday paradox, deterministically under the
-    # injected rng.
+    """Every distinct value the buffer can hand back, via repeated valid draws.
+
+    sample() refuses batch_size > len(buf), so coverage has to be accumulated
+    rather than taken in one oversized call. Many draws of len(buf) reach full
+    coverage by the birthday paradox, deterministically under the injected rng.
+    """
     sampled: set[float] = set()
     for _ in range(draws):
         sampled |= {float(v) for v in buf.sample(len(buf)).obs[:, 0]}
@@ -116,21 +114,18 @@ def test_state_dict_round_trip_restores_contents_and_position():
     restored = ReplayBuffer(10, (1,), rng=np.random.default_rng(0))
     restored.load_state_dict(buf.state_dict())
     assert len(restored) == 3
-    # batch_size is bounded by what's stored (see
-    # test_sampling_more_than_is_stored_raises); 3 is len(restored) == len(buf).
+    # 3 is len(restored) == len(buf); sample() refuses anything larger.
     assert restored.sample(3).obs[:, 0].tolist() == buf.sample(3).obs[:, 0].tolist()
 
 
 def test_state_dict_round_trip_preserves_ring_wrap_position():
-    # Sampling alone can't tell whether the write position (_pos) came back:
-    # sample() never reads it. A buffer restored mid-ring must resume
-    # overwriting from the same slot as the live one, not restart at index 0
-    # -- otherwise the next add corrupts a different, still-valid transition.
-    #
-    # This also only means anything if the two buffers are independent after
-    # the round trip -- see test_state_dict_round_trip_does_not_alias, which
-    # checks that directly. If state_dict()/load_state_dict() shared storage,
-    # this assertion would pass vacuously: "restored" would just be "buf".
+    """sample() never reads _pos, so sampling cannot tell whether it came back.
+
+    A buffer restored mid-ring must overwrite from the same slot as the live
+    one, or the next add corrupts a different still-valid transition. This
+    holds only because test_state_dict_round_trip_does_not_alias proves the two
+    buffers are independent; shared storage would pass it vacuously.
+    """
     buf = ReplayBuffer(5, (1,))
     buf.add(transitions([1.0, 2.0, 3.0]))  # pos=3: not 0, not a capacity boundary
     restored = ReplayBuffer(5, (1,))
@@ -144,12 +139,9 @@ def test_state_dict_round_trip_preserves_ring_wrap_position():
 
 
 def test_state_dict_round_trip_does_not_alias():
-    # state_dict() must hand back a frozen snapshot, and load_state_dict()
-    # must not retain references into the dict it was given -- otherwise a
-    # buffer and its checkpoint (or two buffers restored from the same
-    # checkpoint) share storage, and add() on one silently corrupts the
-    # other. Checked in both directions: mutating the live buffer after
-    # taking a snapshot, and mutating a buffer restored from that snapshot.
+    """A snapshot must freeze, and a restore must not retain the dict it was
+    given, or add() on one buffer corrupts its checkpoint or a sibling
+    restored from it. Checked in both directions."""
     buf = ReplayBuffer(5, (1,))
     buf.add(transitions([1.0, 2.0, 3.0]))
 

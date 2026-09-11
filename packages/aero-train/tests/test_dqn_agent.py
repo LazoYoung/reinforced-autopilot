@@ -82,12 +82,10 @@ def test_greedy_agent_is_deterministic():
 
 
 def test_forward_pass_runs_with_grad_mode_disabled():
-    # The brief's own "does not build a graph" test only inspects
-    # net.parameters(), which are leaf tensors and have grad_fn=None whether or
-    # not torch.no_grad() is active -- it would pass even if __call__ dropped
-    # the no_grad guard. This test pins the actual contract by observing
-    # torch.is_grad_enabled() from inside the network's own forward pass, which
-    # does flip with the guard.
+    """Reads torch.is_grad_enabled() from inside the forward pass, which does
+    flip with the guard. Inspecting net.parameters() does not: they are leaf
+    tensors with grad_fn=None whether or not torch.no_grad() is active, so such
+    a test passes even with __call__'s no_grad guard dropped."""
     net = mlp(4, (8,), 3)
     grad_enabled_during_forward = []
     net.register_forward_hook(

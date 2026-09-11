@@ -2,7 +2,7 @@
 
 They are algorithms rather than a CLI subcommand so that a baseline run lands
 in the same MLflow experiment, on the same metrics, as the run it is compared
-against -- which is the whole thing a comparison needs. Nothing else about the
+against, which is the whole thing a comparison needs. Nothing else about the
 stack has to know they are special.
 """
 
@@ -26,7 +26,7 @@ class _Baseline(Algorithm):
 
     @property
     def global_step(self) -> int:
-        """Frames, not gradient updates -- a baseline takes none.
+        """Frames, not gradient updates: a baseline takes none.
 
         A deliberate departure from the Algorithm contract, because global_step
         is the x-axis everything is logged against: returning a constant 0
@@ -58,18 +58,14 @@ class _Baseline(Algorithm):
 
 class Random(_Baseline):
     def make_agent(self) -> Agent:
-        # +1, not cfg.seed itself: decorrelates this action stream from the
-        # other consumers seeded off the same run config (env resets, the
-        # rollout engine) so the baseline's randomness isn't a shadow of
-        # theirs.
-        #
-        # evaluate_policy calls make_agent() fresh each time it evaluates, so
-        # this reseeds from the same fixed value on every call. Combined with
-        # eval's fixed per-episode seeds, every periodic evaluation of this
-        # baseline replays an identical trajectory -- its eval/return_mean
-        # curve in MLflow is flat by construction, not a sign anything is
-        # broken. Training-rollout metrics are unaffected: there the agent is
-        # built once and its RNG advances normally across the whole run.
+        """A fresh agent on a fixed derived seed, per the Agent contract.
+
+        +1 decorrelates this action stream from the other consumers seeded off
+        the same run config. Because evaluate_policy calls this fresh each time
+        and eval fixes its per-episode seeds, every periodic evaluation replays
+        one identical trajectory: a flat eval/return_mean curve here is by
+        construction. Training rollouts build the agent once and are unaffected.
+        """
         return RandomAgent(self.n_actions, np.random.default_rng(self._seed + 1))
 
 

@@ -26,10 +26,9 @@ def make_cfg(**tracking):
 
 
 def test_null_tracker_satisfies_the_abc_and_does_nothing(tmp_path, monkeypatch):
-    # "Does nothing" means no side effect anywhere, not merely "raises
-    # nothing" -- a tracker that quietly wrote to the default ./mlruns file
-    # store would still pass a no-exception check and leave Trainer tests
-    # dirty. Run from an empty cwd and assert it stays empty.
+    """No side effect anywhere, not merely "raises nothing": a
+    tracker quietly writing to ./mlruns passes a no-exception check and leaves
+    Trainer tests dirty. Run from an empty cwd, which must stay empty."""
     monkeypatch.chdir(tmp_path)
     tracker = NullTracker()
     assert isinstance(tracker, Tracker)
@@ -42,7 +41,7 @@ def test_null_tracker_satisfies_the_abc_and_does_nothing(tmp_path, monkeypatch):
 
 def test_build_tracker_builds_no_mlflow_when_disabled():
     """`enabled` governs MLflow only. Console output is a separate switch, so
-    what disabling tracking must guarantee is that no run is created -- not
+    what disabling tracking must guarantee is that no run is created, not
     that the terminal goes quiet."""
     tracker = build_tracker(make_cfg(enabled=False))
     assert not isinstance(tracker, MLflowTracker)
@@ -50,10 +49,9 @@ def test_build_tracker_builds_no_mlflow_when_disabled():
 
 
 def test_mlflow_tracker_defaults_to_a_local_mlruns_file_store(tmp_path, monkeypatch):
-    # Task contract: the default backing store is a local file store under
-    # `mlruns/`, which is gitignored. The installed mlflow's own fallback is
-    # `sqlite:///mlflow.db` in cwd instead -- not gitignored -- so the
-    # default must be pinned explicitly rather than left to mlflow's choice.
+    """The documented default is a file store under the gitignored `mlruns/`.
+    mlflow's own fallback is `sqlite:///mlflow.db` in cwd, which is not
+    gitignored, so the default has to be pinned rather than inherited."""
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     monkeypatch.chdir(tmp_path)
     cfg = make_cfg(enabled=True, experiment="unit")

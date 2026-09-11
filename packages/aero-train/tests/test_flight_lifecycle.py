@@ -1,6 +1,6 @@
 """One flow, not six tests: start, checkpoint, kill, resume, finish, eval.
 
-Phase 1's only Critical defect lived exactly here -- a run's final iteration was
+Phase 1's only Critical defect lived exactly here: a run's final iteration was
 never checkpointed, which every component-interface test passed straight over.
 """
 
@@ -35,17 +35,26 @@ CONFIG = {
 
 
 def _assert_eval_report_printed(out: str) -> None:
-    # Component tests already cover the report's structure; this is the
-    # end-to-end test, and an exit code alone is the weakest possible evidence
-    # that cmd_eval did real work -- a degenerate report (or none at all) that
-    # never raises would still return 0. Mirrors the substring checks
-    # test_eval_reports_a_mean_return uses in test_cli.py.
+    """An exit code alone is the weakest evidence cmd_eval did real work; a
+    degenerate report that never raises still returns 0. Structure itself is
+    covered by test_cli.test_eval_reports_a_mean_return, which this mirrors."""
     assert "mean return" in out
     assert "length" in out
     assert "terminated" in out
 
 
 def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
+    """Resume is checked on global_step, because `frames` cannot see it.
+
+    Whether cmd_resume seeds Trainer.frames from the checkpoint or leaves it at
+    0, the loop is `while frames < total_steps`, so both paths stop at the same
+    ceiling for any total_steps. global_step separates them: updates_per_iter=1
+    and a buffer reloaded already past warmup mean one gradient step per
+    iteration, so its delta is the iteration count each path actually ran,
+    and a real resume, starting past halfway, runs about half of a restart's.
+    So a moved constant that is still roughly half a restart's is the scenario's
+    dynamics drifting, not a resume regression.
+    """
     config = dict(CONFIG)
     config["checkpoint"] = {
         "dir": str(tmp_path / "checkpoints"),
@@ -69,34 +78,10 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
     assert second["frames"] > first["frames"]
     assert second["config"]["env"]["scenario"] == "steady_flight"
 
-    # `frames` cannot distinguish a real resume from a silent restart: whether
-    # cmd_resume seeds Trainer.frames from the checkpoint (512-ish) or leaves it
-    # at Trainer.__init__'s default of 0, the run loop is `while frames <
-    # total_steps`, so *both* paths stop as soon as frames crosses the same
-    # 1024 ceiling -- no choice of total_steps changes that, since it's the
-    # very thing both paths converge on. global_step does distinguish them: with
-    # updates_per_iter=1 and include_buffer=True (the buffer is already past
-    # warmup_frames the moment it's reloaded), every iteration during resume
-    # takes exactly one gradient step regardless of which path is taken, so
-    # global_step's delta equals the iteration count each path actually runs --
-    # and a genuine resume, starting already past the halfway point, runs about
-    # half as many new iterations as a restart from zero would. 8 is this run's
-    # exact, deterministic (fixed seed, CPU-only) iteration count; a restart
-    # measures 17 on this same config (see the mutation report and this task's
-    # fix-round report for both numbers, and the demonstration that deleting
-    # `trainer.frames = frames` in cmd_resume turns this line red).
-    #
-    # The constant is a function of this scenario's flight dynamics, not just of
-    # the config: iterations are counted in frames, autoreset rows are masked out
-    # of the frame count, so longer episodes mean fewer wasted rows and fewer
-    # iterations to reach total_steps. It moved 10 -> 9 when the action seed
-    # started reading control commands instead of positions and the aircraft
-    # stopped sinking out of the band in eight steps, and 9 -> 8 when reset()
-    # began discarding the FDM so every episode starts from an identical state. A change here is a signal
-    # to re-measure the dynamics, not evidence of a resume regression -- the way
-    # to tell them apart is that a restart still measures roughly twice this.
+    # 8 tracks the flight dynamics, not just the config: autoreset rows are
+    # masked out of the frame count. A restart measures 17 here.
     assert second["global_step"] - first["global_step"] == 8, (
-        "resume did not continue from the saved global_step -- frames alone "
+        "resume did not continue from the saved global_step; frames alone "
         "can't tell a real resume from a restart, since both converge on the "
         "same total_steps ceiling"
     )

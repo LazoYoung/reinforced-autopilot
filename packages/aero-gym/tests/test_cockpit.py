@@ -134,7 +134,7 @@ def test_c172p_yoke_follows_the_controls():
 
 def test_c172p_airspeed_indicator_gets_the_property_its_needle_animates_on():
     """The c172p's ASI needle rotates on `fdm/jsbsim/velocities/vias-kts`, which
-    its own JSBSim <system> (Systems/indicated-airspeed.xml) produces -- and that
+    its own JSBSim <system> (Systems/indicated-airspeed.xml) produces, and that
     system does not run under --fdm=null, so the needle sits at zero however
     healthy the pitot chain is. Publish calibrated airspeed into it directly.
     """

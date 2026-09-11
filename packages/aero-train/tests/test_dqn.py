@@ -81,12 +81,13 @@ def test_epsilon_decays_linearly_and_floors_at_the_final_value():
 
 
 def test_target_net_syncs_on_the_configured_interval(monkeypatch):
-    # Counting calls to .sync() -- not just "did any target param change" --
-    # is what distinguishes "syncs every target_sync_interval steps" from both
-    # "syncs on every step" (which tracks the online net and stabilises
-    # nothing, the canonical silent DQN failure) and "never syncs". With
-    # updates_per_iter=3 and target_sync_interval=2, global_step hits 1, 2, 3
-    # across one update() call, so .sync() must fire exactly once (at step 2).
+    """Counts .sync() calls, which "did any target param change" cannot.
+
+    That distinguishes the interval from both "syncs every step" (which
+    tracks the online net and stabilises nothing, the canonical silent DQN
+    failure) and "never syncs". updates_per_iter=3 with target_sync_interval=2
+    walks global_step through 1, 2, 3, so exactly one sync is due.
+    """
     algo = make_dqn()
     algo.observe(segment())
     sync_calls = []
@@ -133,15 +134,14 @@ def test_bootstrap_discount_uses_the_actual_step_count():
 
 
 def test_bootstrap_discount_over_a_real_n_step_segment():
-    # test_bootstrap_discount_uses_the_actual_step_count above hand-builds a
-    # batch with steps=3 while cfg.n_step=1 -- a combination to_transitions can
-    # never actually emit. This one drives the real to_transitions ->
-    # _bellman_target path with n_step=3: two envs, one terminates at t=2, the
-    # other is truncated at t=3, and both autoreset rows are excluded, so most
-    # of the resulting transitions carry steps < n_step. That is exactly where
-    # a regression to a constant gamma**n_step silently mis-weights the
-    # bootstrap, and exactly the case a hand-built single-transition batch
-    # cannot exercise.
+    """Drives to_transitions -> _bellman_target for real, at n_step=3.
+
+    The hand-built batch in test_bootstrap_discount_uses_the_actual_step_count
+    pairs steps=3 with n_step=1, which to_transitions can never emit. Here a
+    termination, a truncation and two excluded autoreset rows leave most
+    transitions at steps < n_step, where a regression to a constant
+    gamma**n_step silently mis-weights the bootstrap.
+    """
     T, B = 5, 2
     obs = np.zeros((T + 1, B, 4), np.float32)
     actions = np.zeros((T, B), np.int64)
@@ -156,11 +156,8 @@ def test_bootstrap_discount_over_a_real_n_step_segment():
     seg = Segment(obs, actions, rewards, terminated, truncated, valid)
     tr = to_transitions(seg, gamma=0.5, n_step=3)
 
-    # Hand-derived: env 0's valid rows are t=0,1,2,4 (t=3 is the autoreset
-    # skip; the terminal at t=2 cuts rows 0 and 1 short but not row 2 itself,
-    # and t=4 starts a fresh post-reset episode). Env 1's valid rows are
-    # t=0,1,2,3 (t=4 is the autoreset skip; the truncation at t=3 cuts row 2
-    # short but not the truncation row itself).
+    # Hand-derived from valid rows t=0,1,2,4 (env 0) and t=0,1,2,3 (env 1): each
+    # boundary cuts the rows *before* it short, not the terminal row itself.
     assert tr.steps.tolist() == [3, 2, 1, 1, 3, 3, 2, 1]
     assert tr.terminated.tolist() == [True, True, True, False, False, False, False, False]
     assert tr.returns.tolist() == pytest.approx([2.75, 3.5, 3.0, 5.0, 2.75, 4.5, 5.0, 4.0])
@@ -177,20 +174,18 @@ def test_bootstrap_discount_over_a_real_n_step_segment():
             p.zero_()
         list(algo.target.target_model.parameters())[-1].fill_(10.0)
     target = algo._bellman_target(tr)
-    # A constant gamma**n_step (0.125) would only coincide with gamma**steps on
-    # the steps==3 rows (indices 0, 4, 5); every steps<3 row here (1, 2, 3, 6, 7)
-    # would come out wrong.
+    # A constant gamma**n_step (0.125) matches gamma**steps only on the steps==3
+    # rows (0, 4, 5); rows 1, 2, 3, 6, 7 would come out wrong.
     assert target.tolist() == pytest.approx([2.75, 3.5, 3.0, 10.0, 4.0, 5.75, 7.5, 9.0])
 
 
 def test_bellman_target_does_not_require_grad():
-    # This is a regression guard for TargetNet's parameter freeze, not itself
-    # proof of "no gradient through the target": with that freeze in place,
-    # this stays green whether or not _bellman_target's torch.no_grad() block
-    # is present at all, since torch never builds a graph through parameters
-    # that have requires_grad=False. It only goes red if a future change
-    # touches both the freeze and this no_grad() block together (see the fix
-    # round 1 report for the mutation that demonstrates this).
+    """Guards TargetNet's parameter freeze, not the no_grad() block.
+
+    With the freeze in place torch builds no graph either way, so this stays
+    green even with _bellman_target's torch.no_grad() deleted. It goes red only
+    if a change removes both together.
+    """
     algo = make_dqn()
     batch = Transitions(
         obs=np.zeros((2, 4), np.float32),
@@ -205,11 +200,12 @@ def test_bellman_target_does_not_require_grad():
 
 
 def test_actor_state_dict_carries_weights_and_epsilon_only():
-    # An exact key set, not a blacklist: a blacklist only catches a leaked key
-    # if it happens to start with "optimizer" or "target"; a leaked
-    # optimizer-internal key like "adam_exp_avg" would sail through it. Any new
-    # key -- leaked or legitimate -- must fail here until this assertion is
-    # consciously updated, which is the point.
+    """Asserts an exact key set rather than a blacklist.
+
+    A blacklist catches a leak only if the key starts with "optimizer" or
+    "target"; something like "adam_exp_avg" sails through. Any new key must
+    fail here until the assertion is consciously updated.
+    """
     algo = make_dqn()
     sd = algo.actor_state_dict()
     assert set(sd.keys()) == {"0.weight", "0.bias", "2.weight", "2.bias", "selector.epsilon"}
@@ -217,11 +213,12 @@ def test_actor_state_dict_carries_weights_and_epsilon_only():
 
 
 def test_the_architecture_is_named_in_exactly_one_place(monkeypatch):
-    # The brief's own assertions here (kept below) only check that _build_net
-    # is *callable* and reproducible -- they stay green even if __init__ or
-    # make_agent stop calling it and build the architecture some other way.
-    # Spying on _build_net itself is what pins "exactly one place": __init__
-    # and make_agent must each route through it exactly once.
+    """Spies on _build_net, since calling it proves nothing about who else does.
+
+    The assertions below only show _build_net is callable and reproducible;
+    they stay green if __init__ or make_agent build the net some other way.
+    The spy pins each of those to exactly one call through it.
+    """
     calls: list[torch.nn.Module] = []
     original = DQN._build_net
 
@@ -276,11 +273,12 @@ def test_state_dict_round_trip_restores_progress_and_weights():
 
 
 def test_state_dict_restores_the_replay_sampler_stream():
-    # without this a resumed run samples a different replay sequence and diverges.
-    # algo samples once before checkpointing so its rng stream has already moved
-    # past the shared fresh-seed state both algos start from -- otherwise this
-    # test would pass even with the restore deleted, since make_dqn() always
-    # seeds the buffer rng with the same value.
+    """Without the restore, a resumed run samples a different replay sequence.
+
+    algo samples once before checkpointing so its rng has moved past the shared
+    fresh-seed state; otherwise this would pass with the restore deleted, since
+    make_dqn() always seeds the buffer rng identically.
+    """
     algo = make_dqn()
     algo.observe(segment())
     algo.buffer.sample(4)
@@ -291,10 +289,11 @@ def test_state_dict_restores_the_replay_sampler_stream():
 
 
 def test_state_dict_snapshot_does_not_move_when_training_continues():
-    # Same class of bug fixed one commit earlier in ReplayBuffer.state_dict:
-    # nn.Module.state_dict() detaches each tensor but does not clone it, so it
-    # aliases the same storage as the live parameter. A checkpoint dict taken
-    # now must not silently change value as training keeps going.
+    """nn.Module.state_dict() detaches each tensor but does not clone it.
+
+    The snapshot therefore aliases live parameter storage (the same bug fixed
+    earlier in ReplayBuffer.state_dict) and would drift as training continues.
+    """
     algo = make_dqn()
     algo.observe(segment())
     algo.update()

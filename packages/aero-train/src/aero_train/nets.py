@@ -1,6 +1,6 @@
 """Network builders shared by every algorithm.
 
-The policies here are small -- a 12-observation, 81-action flight task
+The policies here are small: a 12-observation, 81-action flight task
 (steady_flight through DeltaAction's Discrete(3**4)) with DQNConfig's default
 2x128 MLP is roughly 28.6k parameters (~112 KiB in fp32). That number is
 load-bearing for the whole distribution design: at 112 KiB a weight broadcast
@@ -21,7 +21,7 @@ def mlp(in_dim: int, hidden_sizes: Sequence[int], out_dim: int) -> nn.Sequential
     """Fully-connected ReLU stack with a *linear* output layer.
 
     No output activation: Q-values and value estimates are unbounded, and a
-    final ReLU would silently clamp every negative one to zero -- which is most
+    final ReLU would silently clamp every negative one to zero, which is most
     of them under steady_flight's negative-error reward.
     """
     layers: list[nn.Module] = []

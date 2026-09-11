@@ -19,7 +19,7 @@ class DeltaAction(gym.ActionWrapper):
     independent uniform absolute commands at 10 Hz average out to nothing and
     the aircraft barely moves, while a random walk over commands produces the
     sustained deflections that actually explore the state space. And range and
-    precision decouple -- full deflection stays reachable, and delta only sets
+    precision decouple: full deflection stays reachable, and delta only sets
     how finely it is approached, where absolute binning trades one against the
     other.
 
@@ -68,9 +68,8 @@ class DeltaAction(gym.ActionWrapper):
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        # Seeded from the aircraft's post-reset control state rather than zero.
-        # PROFILES["c172p"].startup commands 0.7 throttle; an accumulator
-        # starting at zero would chop it to idle on the very first step.
+        # Seeded from post-reset control state, not zero: c172p startup commands
+        # 0.7 throttle, which an accumulator at zero chops to idle on step one.
         self._command = np.clip(
             np.asarray(self.get_wrapper_attr("initial_action")(), np.float32),
             self._low,

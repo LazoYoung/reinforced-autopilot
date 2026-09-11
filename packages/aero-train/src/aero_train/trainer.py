@@ -40,11 +40,11 @@ class EvalReport:
     Return alone is not enough once reward is per-step and positive: return is
     roughly length times quality, so one number cannot separate a long bad
     episode from a short good one. return_per_step is that quality half on its
-    own -- for steady_flight it reads straight off the reward scale, 1.0 on
+    own: for steady_flight it reads straight off the reward scale, 1.0 on
     target and 0.0 at the band's corner, so it answers "how well is it flying,
     while it flies". Unlike terminated_frac it moves from the first eval,
     before the agent can survive a full episode. terminated_frac inverts the
-    CartPole reading -- for a flight scenario, terminated means the objective
+    CartPole reading: for a flight scenario, terminated means the objective
     band was left, so 0.0 is success and truncation is a survived episode.
 
     The per-episode tuples are kept because five episodes averaging 900 is a
@@ -70,7 +70,7 @@ def evaluate_policy(
     """Greedy evaluation over `episodes` episodes in a single environment.
 
     Greediness is requested through the same actor_state_dict convention the
-    workers use -- exploration parameters under the `selector.` prefix -- rather
+    workers use (exploration parameters under the `selector.` prefix) rather
     than by reaching into the agent, so it keeps working as algorithms are added.
     """
     agent = algo.make_agent()
@@ -105,10 +105,8 @@ def evaluate_policy(
     return EvalReport(
         mean_return=float(np.mean(returns)),
         mean_length=float(np.mean(lengths)),
-        # Each episode counts once, like the two means above -- not
-        # sum(returns) / sum(lengths), which weights by length and lets one
-        # long episode speak for the whole eval. Lengths are >= 1 because the
-        # loop above always takes a step before checking done, so no guard.
+        # Each episode counts once, unlike sum(returns) / sum(lengths), which
+        # lets one long episode speak for the eval. Lengths are >= 1 above.
         return_per_step=float(np.mean([r / n for r, n in zip(returns, lengths)])),
         terminated_frac=float(np.mean(terminations)),
         returns=tuple(returns),
@@ -138,21 +136,16 @@ class Trainer:
     def run(self) -> None:
         self.tracker.log_params(self.cfg)
         try:
-            # True until the loop runs at least one iteration whose own cadence
-            # (interval_iters / eval_interval_iters) did NOT already checkpoint --
-            # tracks whether the final iteration's state still needs saving below.
+            # Whether the most recent iteration's own cadence already saved it,
+            # and so whether the tail still needs the forced save below.
             final_iteration_checkpointed = True
             while self.frames < self.cfg.total_steps:
                 metrics = self._iterate()
                 self.tracker.log_metrics(metrics, step=self.algo.global_step)
                 final_iteration_checkpointed = self._maybe_checkpoint()
             if not final_iteration_checkpointed:
-                # interval_iters has no reason to land on a run's last iteration,
-                # so without this the tail of every run -- and the entirety of a
-                # run shorter than interval_iters -- is silently discarded. Force
-                # an eval alongside it (when there is an eval env) so the
-                # best-checkpoint bookkeeping gets a chance to see the final
-                # policy too, not just whichever interval iteration preceded it.
+                # interval_iters rarely lands on the last iteration, so the tail
+                # of every run would be lost. The eval rides along on purpose.
                 self._checkpoint(eval_due=self.eval_env_fn is not None)
         finally:
             self.engine.close()

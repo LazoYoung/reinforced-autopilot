@@ -56,11 +56,9 @@ def test_override_is_applied(config_path, tmp_path):
 
 
 def test_override_accepts_bare_exponent_learning_rate(config_path, tmp_path):
-    # The most natural spelling for a learning-rate sweep -- `algo.lr=1e-3` --
-    # used to reach DQNConfig as the str "1e-3" (PyYAML's YAML-1.1 float
-    # grammar requires a decimal point before the exponent), raising a bare
-    # "'<=' not supported between instances of 'str' and 'int'" from
-    # __post_init__ instead of building a working config.
+    """`algo.lr=1e-3`, the natural sweep spelling, used to reach DQNConfig as a
+    str (PyYAML's YAML-1.1 grammar wants a decimal point before the exponent)
+    and __post_init__ raised a bare str/int comparison error."""
     cli.main(["train", str(config_path), "--override", "algo.lr=1e-3"])
     cfg = load_checkpoint(tmp_path / "ckpt" / "latest.pt")["config"]
     assert cfg["algo"]["lr"] == pytest.approx(0.001)
@@ -89,9 +87,8 @@ def test_resume_extends_the_frame_budget(config_path, tmp_path):
 
 
 def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
-    # This config's eval_interval_iters (100) never fires within 4 iterations,
-    # so plant a best_return as if an earlier eval already had -- exactly what
-    # a real `autopilot train` that found a good policy leaves behind.
+    # eval_interval_iters (100) never fires within 4 iterations, so plant the
+    # best_return a real `autopilot train` would have left behind.
     cli.main(["train", str(config_path)])
     ckpt = tmp_path / "ckpt" / "latest.pt"
     payload = load_checkpoint(ckpt)
@@ -99,11 +96,8 @@ def test_resume_preserves_the_prior_run_s_best_return(config_path, tmp_path):
     save_checkpoint(ckpt, payload)
 
     cli.main(["resume", str(ckpt), "--total-steps", "128"])
-    # cmd_resume's CheckpointManager must be seeded from the checkpoint's own
-    # best_return. If it instead defaults to -inf, this resumed run's own
-    # saves (which never eval, so never improve on a true best) still carry
-    # "best_return": -inf in every payload, silently erasing the 500.0 a real
-    # best.pt would have represented.
+    # Seeded from the checkpoint, not -inf: this run never evals, so every save
+    # would carry -inf and silently erase the prior best.
     assert load_checkpoint(ckpt)["best_return"] == 500.0
 
 
@@ -111,9 +105,8 @@ def test_eval_reports_a_mean_return(config_path, tmp_path, capsys):
     cli.main(["train", str(config_path)])
     assert cli.main(["eval", str(tmp_path / "ckpt" / "latest.pt"), "--episodes", "2"]) == 0
     out = capsys.readouterr().out
-    # "mean return" alone doesn't prove the length/terminated portions of the
-    # f-string survived -- a dropped or garbled tail would still contain that
-    # substring and pass unnoticed. Check for length and terminated too.
+    # "mean return" alone would still match a report whose tail was dropped or
+    # garbled, so the length and terminated portions are checked too.
     assert "mean return" in out
     assert "length" in out
     assert "terminated" in out
@@ -224,12 +217,7 @@ def test_an_unknown_subcommand_exits_nonzero():
 
 
 # --- autopilot mlflow -------------------------------------------------------
-#
-# No test here may spawn a subprocess, open a socket, or launch a real MLflow
-# server (project-wide constraint). build_mlflow_server_argv is tested as a
-# pure function; cmd_mlflow (reached through main, so the argparse wiring is
-# covered too) is tested with os.execvp and shutil.which monkeypatched so
-# nothing actually execs.
+# No subprocess, socket or real server: os.execvp and shutil.which are patched.
 
 
 class _FakeExec:

@@ -21,7 +21,7 @@ class RandomEnv(gym.Env):
 
     CountingEnv's obs is the step index and never touches the RNG, so a test
     that reuses it to check seed reproducibility would pass even if the seed
-    were silently dropped or corrupted before reaching env.reset -- there is
+    were silently dropped or corrupted before reaching env.reset: there is
     nothing in CountingEnv's output that could disagree. RandomEnv exists only
     to give the reproducibility test something that would actually change if
     LocalRolloutEngine forwarded the wrong seed.

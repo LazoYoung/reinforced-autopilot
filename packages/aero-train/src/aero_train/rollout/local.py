@@ -1,7 +1,7 @@
 """In-process rollout. Imports nothing from Ray, by design and by test.
 
 This is the debugging path, the unit-test path, and what the CartPole
-integration test uses -- which is the only cheap end-to-end proof that the
+integration test uses, which is the only cheap end-to-end proof that the
 learning stack is correct. A bug in DQN and a bug in the flight model are
 otherwise indistinguishable when a steady_flight run fails to learn.
 """

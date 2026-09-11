@@ -1,8 +1,8 @@
 """The vocabulary shared by every algorithm: what experience looks like, and
 what turns network output into an action.
 
-This is the PTAN decomposition -- ActionSelector -> Agent -> ExperienceSource ->
-ReplayBuffer -- with two corrections. Gymnasium's `terminated` and `truncated`
+This is the PTAN decomposition (ActionSelector -> Agent -> ExperienceSource ->
+ReplayBuffer) with two corrections. Gymnasium's `terminated` and `truncated`
 stay distinct (PTAN predates the distinction and conflates them into `done`),
 and the payload is a [T, B] segment rather than a flat transition.
 """
@@ -44,12 +44,12 @@ class EpisodeResult:
 class Segment:
     """Contiguous experience with time as an explicit axis.
 
-    obs         [T + 1, B, *obs_shape]  -- the extra row is the bootstrap obs
+    obs         [T + 1, B, *obs_shape]  the extra row is the bootstrap obs
     actions     [T, B, *act_shape]
     rewards     [T, B]  float32
-    terminated  [T, B]  bool  -- a real terminal state; do NOT bootstrap past it
-    truncated   [T, B]  bool  -- a time limit; you MUST bootstrap past it
-    valid       [T, B]  bool  -- False on Gymnasium's fabricated autoreset steps
+    terminated  [T, B]  bool  a real terminal state; do NOT bootstrap past it
+    truncated   [T, B]  bool  a time limit; you MUST bootstrap past it
+    valid       [T, B]  bool  False on Gymnasium's fabricated autoreset steps
 
     `obs` carries T + 1 entries so V(s_T) can be computed without a second
     forward pass or a stashed observation.
@@ -106,7 +106,7 @@ class Transitions:
     """A flat batch of n-step transitions, as stored in the replay buffer.
 
     returns     discounted sum of the rewards actually collected
-    steps       how many steps `returns` covers -- fewer than n at a segment
+    steps       how many steps `returns` covers; fewer than n at a segment
                 edge or an episode end, so the bootstrap discount is gamma**steps
     terminated  True only if a real terminal state was reached within those steps
 
@@ -139,7 +139,7 @@ class ActionSelector(ABC):
     """Turns network output into an action. Holds any exploration state.
 
     Separated from the network so that exploration strategy is configuration
-    rather than code -- the same Q-network is greedy under ArgmaxSelector and
+    rather than code: the same Q-network is greedy under ArgmaxSelector and
     exploring under EpsilonGreedySelector.
     """
 
@@ -213,10 +213,9 @@ class _WeightlessAgent(Agent):
     """Shared base for agents with no network behind them."""
 
     def sync_weights(self, actor_state_dict: dict[str, np.ndarray]) -> None:
-        # Nothing to load. The payload arrives -- carrying selector.epsilon --
-        # only because evaluate_policy and RolloutEngine speak one protocol to
-        # every algorithm. Ignoring a key is normally the failure mode this
-        # codebase rejects; here there is genuinely no state to put it in.
+        """Accepts and discards the payload. It arrives at all only because
+        evaluate_policy and RolloutEngine speak one protocol to every
+        algorithm, and there is genuinely no state here to put it in."""
         return
 
 

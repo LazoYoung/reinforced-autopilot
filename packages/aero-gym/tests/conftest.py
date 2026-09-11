@@ -32,10 +32,8 @@ class FakeSimulator(Simulator):
         self.controls[var] = value
 
     def get_control(self, var: V) -> float:
-        # A real backend reads back its own command property; the fake stores
-        # commands in `controls`, so reading that back is the same inverse.
-        # Defaults to 0.0 for a control never commanded, which is what a
-        # freshly reset FDM reports too.
+        # Reading `controls` back is the same inverse a real backend performs on
+        # its command property. 0.0 is what a freshly reset FDM reports too.
         return self.controls.get(var, 0.0)
 
     def run(self) -> None:

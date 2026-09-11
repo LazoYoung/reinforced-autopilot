@@ -31,10 +31,8 @@ def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
 
 def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     env_fn = make_env_fn(cfg.env)
-    # A separate factory with the viewer stripped, not env_fn reused: eval
-    # builds its own env, and with render_mode carried over that env launches a
-    # second FlightGear on the same default ports while the training viewer is
-    # still alive. The eval env is not the one the user is watching.
+    # Viewer stripped: eval builds its own env, which with render_mode carried
+    # over would launch a second FlightGear on the same ports.
     eval_env_fn = (
         env_fn
         if cfg.env.render_mode is None
@@ -47,9 +45,8 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     if resume_from is not None:
         algo.load_state_dict(resume_from["algo"])
         frames = int(resume_from["frames"])
-        # .get(...), not [...]: a checkpoint written before this field existed
-        # should still resume, just back at -inf like today's behavior, rather
-        # than KeyError on an old file
+        # .get(), not []: a checkpoint written before this field existed should
+        # still resume, just back at -inf.
         best_return = float(resume_from.get("best_return", float("-inf")))
         if resume_from.get("buffer") is not None and hasattr(algo, "buffer"):
             algo.buffer.load_state_dict(resume_from["buffer"])
@@ -87,7 +84,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
                 f"trained on Gymnasium env {env_cfg.id!r}, which has no viewer"
             )
         # eval is the only path that touches FlightGear, and it is single-env and
-        # local by construction -- one viewer, one aircraft.
+        # local by construction: one viewer, one aircraft.
         env_cfg = dataclasses.replace(env_cfg, render_mode="flightgear")
     env_fn = make_env_fn(env_cfg)
     obs_space, act_space = _spaces(env_fn)
@@ -95,7 +92,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     algo.load_state_dict(payload["algo"])
     report = evaluate_policy(algo, env_fn, args.episodes, seed=cfg.seed)
     # "mean return" (not just "return") is the substring test_eval_reports_a_mean_return
-    # asserts on -- keep it literally present alongside the new length/termination fields.
+    # asserts on, so keep it present alongside the length/termination fields.
     print(
         f"{args.episodes} episodes: mean return {report.mean_return:.2f}, "
         f"length {report.mean_length:.1f}, return/step {report.return_per_step:.3f}, "
@@ -107,7 +104,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
 def build_mlflow_server_argv(store: str, host: str, port: int) -> list[str]:
     """Build the argv for `uvx --from mlflow mlflow server ...`.
 
-    Pure -- no I/O, no env mutation -- so it can be tested without spawning
+    Pure (no I/O, no env mutation), so it can be tested without spawning
     anything. A `store` containing "://" is already a URI (a sqlite file, a
     real tracking server) and is passed through untouched; otherwise it is a
     filesystem path and needs the `file:` scheme MLflow expects.
@@ -129,10 +126,8 @@ def build_mlflow_server_argv(store: str, host: str, port: int) -> list[str]:
 
 
 def cmd_mlflow(args: argparse.Namespace) -> int:
-    # setdefault, not assignment: an explicit value the caller already set
-    # (e.g. a shared-host MLFLOW_ALLOW_FILE_STORE policy) must win over this
-    # default. MLflowTracker makes the identical tradeoff, for the same
-    # reason -- see its constructor.
+    # setdefault, so a shared-host policy already in the environment wins.
+    # MLflowTracker's constructor makes the identical tradeoff.
     os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 
     argv = build_mlflow_server_argv(args.store, args.host, args.port)
@@ -141,17 +136,15 @@ def cmd_mlflow(args: argparse.Namespace) -> int:
     if uvx is None:
         manual = " ".join(argv)
         print(
-            "error: `uvx` not found on PATH -- it ships with uv "
+            "error: `uvx` not found on PATH; it ships with uv "
             "(https://docs.astral.sh/uv/). Run the server manually instead:\n"
             f"  MLFLOW_ALLOW_FILE_STORE=true {manual}",
             file=sys.stderr,
         )
         return 1
 
-    # exec, not subprocess: this is a foreground server the user Ctrl-C's out
-    # of, and exec gives that the obvious behavior with no wrapper process in
-    # the middle. It never returns on success -- the `return 0` below only
-    # runs under a test's monkeypatched os.execvp.
+    # exec, not subprocess: a foreground server the user Ctrl-C's out of, with
+    # no wrapper in the middle. The `return 0` below only runs under a test.
     os.execvp(uvx, argv)
     return 0
 

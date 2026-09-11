@@ -130,9 +130,8 @@ def test_close_flushes_an_iteration_that_the_throttle_withheld():
     assert "512" not in stream.getvalue()
 
     tracker.close()
-    # Specifically the iteration line, not merely the frame count: close()
-    # also prints a footer carrying the same number, which would let this
-    # test pass with the flush deleted.
+    # The iteration line specifically: close() also prints a footer carrying
+    # the same frame count, which would pass with the flush deleted.
     iter_lines = [ln for ln in stream.getvalue().splitlines() if ln.startswith("iter")]
     assert len(iter_lines) == 2
     assert "512" in iter_lines[1]
@@ -156,7 +155,7 @@ def test_a_line_shows_algorithm_metrics_when_the_algorithm_reports_them():
 def test_a_line_omits_algorithm_metrics_when_there_are_none():
     """The two baselines never take a gradient step, so Algorithm.update()
     returns None and no loss/epsilon key ever reaches the tracker. Formatting
-    must degrade rather than KeyError -- these are the runs DQN is measured
+    must degrade rather than KeyError: these are the runs DQN is measured
     against, so they cannot be the ones that crash."""
     tracker, stream, _ = make_tracker()
     tracker.log_metrics(iteration(frames=256), step=0)
@@ -234,7 +233,7 @@ def test_composite_fans_every_call_out_to_every_tracker():
 
 def test_composite_closes_the_rest_even_when_one_close_raises():
     """close() runs in Trainer.run's finally block. A tracking backend failing
-    to shut down must not strand the others -- MLflow's run would stay open
+    to shut down must not strand the others, or MLflow's run stays open
     and the console footer would never print."""
 
     class _Exploding(_Recorder):
@@ -269,7 +268,7 @@ def test_build_tracker_pairs_the_console_with_mlflow_when_enabled(tmp_path):
 
 
 def test_build_tracker_returns_the_null_tracker_when_the_console_is_off_too():
-    """Both channels disabled is the only way back to a fully silent run --
+    """Both channels disabled is the only way back to a fully silent run,
     what a benchmark harness or a test wants."""
     assert isinstance(build_tracker(make_cfg(enabled=False, console=False)), NullTracker)
 

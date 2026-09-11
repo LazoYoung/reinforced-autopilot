@@ -31,11 +31,13 @@ def make_env_fn(cfg) -> Callable[[], gym.Env]:
 
 
 def _make_scenario_env_fn(cfg) -> Callable[[], gym.Env]:
-    # Imported here rather than at module scope so the Gymnasium branch never
-    # loads aero_gym at all. That is what keeps the CartPole integration test an
-    # honest proof that the learning stack works with no flight model anywhere
-    # near it. This module is the only place in aero_train permitted to import
-    # aero_gym (see tests/test_dependency_rules.py).
+    """Build an AeroGymEnv for the configured scenario.
+
+    aero_gym is imported here, not at module scope, so the Gymnasium branch
+    never loads it and the CartPole integration test stays honest proof that
+    the learning stack runs with no flight model near it. This module is the
+    only place in aero_train allowed the import (tests/test_dependency_rules).
+    """
     from aero_gym import AeroGymEnv
     from aero_gym.scenarios import make_steady_flight_scenario
 
@@ -55,8 +57,7 @@ def _make_scenario_env_fn(cfg) -> Callable[[], gym.Env]:
         kwargs["max_episode_steps"] = cfg.max_episode_steps
     try:
         # Bound once, here, so a misspelled scenario parameter fails at config
-        # load with the same force as a misspelled config key -- not eight
-        # environments later inside a worker.
+        # load rather than eight environments later inside a worker.
         inspect.signature(factory).bind_partial(**kwargs)
     except TypeError as exc:
         raise ValueError(

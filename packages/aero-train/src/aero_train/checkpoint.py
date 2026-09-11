@@ -38,11 +38,15 @@ def save_checkpoint(path: Path, payload: dict[str, Any]) -> None:
 
 
 def load_checkpoint(path: Path) -> dict[str, Any]:
-    # weights_only=False: the payload carries the config dict and (when
-    # include_buffer is set) a numpy-backed buffer snapshot -- not just tensors --
-    # so torch 2.6+'s weights_only=True default would refuse to unpickle it.
-    # Safe here because these checkpoints are only ever written by this project's
-    # own save_checkpoint, never loaded from an untrusted or third-party source.
+    """Load a checkpoint written by :func:`save_checkpoint`, and only one.
+
+    Unpickling is unrestricted, so the path must be trusted. That is the whole
+    trust boundary: these payloads carry a config dict and an optional
+    numpy-backed buffer snapshot alongside the tensors, which torch 2.6+ will
+    not load under its `weights_only=True` default.
+    """
+    # weights_only=False: the payload is more than tensors. See the docstring
+    # for why that is safe here.
     return torch.load(Path(path), map_location="cpu", weights_only=False)
 
 
@@ -59,11 +63,8 @@ class CheckpointManager:
         self.dir = Path(directory)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.cfg = cfg
-        # Callers resuming a run pass the prior run's best_return (read back out
-        # of the checkpoint payload) here. Left at the default, a fresh manager
-        # pointed at a directory that already has a best.pt from an earlier run
-        # would otherwise treat -inf as the bar to beat and clobber it with the
-        # first eval, however much worse than the checkpoint it replaces.
+        # Resuming callers pass the prior run's value. At the default, a manager
+        # pointed at an existing best.pt clobbers it on the first eval.
         self.best_return = float(best_return)
 
     @property
@@ -83,9 +84,8 @@ class CheckpointManager:
         buffer: ReplayBuffer | None = None,
         eval_return: float | None = None,
     ) -> list[Path]:
-        # Decided before building the payload so best_return in the payload is
-        # always this save's up-to-date value, and the improvement check below
-        # (which needs the *prior* value) doesn't compare it against itself.
+        # Decided before the payload is built: the check needs the *prior*
+        # best_return, while the payload must carry this save's.
         improved = eval_return is not None and eval_return > self.best_return
         if improved:
             self.best_return = float(eval_return)
@@ -94,9 +94,8 @@ class CheckpointManager:
             "algo": algo.state_dict(),
             "global_step": algo.global_step,
             "frames": int(frames),
-            # persisted so a resumed CheckpointManager can be seeded with it --
-            # otherwise resume starts back at -inf and the first eval after
-            # resuming unconditionally overwrites best.pt
+            # Persisted to seed a resumed manager; without it resume restarts at
+            # -inf and the first eval overwrites best.pt.
             "best_return": self.best_return,
             # a 1e5-frame buffer is large and most resumes do not need bit-exact
             # buffer contents, so it is opt-in

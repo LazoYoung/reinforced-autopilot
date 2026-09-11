@@ -32,9 +32,8 @@ def main() -> None:
     obs, info = env.reset(seed=0)
     print(f"scenario: {scenario.name} | aircraft: {scenario.aircraft} | agent rate: {scenario.agent_hz} Hz")
 
-    # Roughly-trimmed baseline controls with small random perturbations on top.
-    # An aircraft whose profile sets pitch trim is already trimmed for cruise
-    # and needs no standing elevator; one without it holds the nose up itself.
+    # Roughly-trimmed baseline controls, perturbed. A profile that sets pitch
+    # trim needs no standing elevator; one without it holds the nose up itself.
     startup = profile_for(scenario.aircraft).startup
     baseline = {
         FlightVariable.ELEVATOR: 0.0 if "fcs/pitch-trim-cmd-norm" in startup else 0.05,

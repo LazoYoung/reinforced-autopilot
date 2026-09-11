@@ -32,11 +32,11 @@ def test_reset_honours_initial_conditions(env):
 
 
 def test_trimmed_flight_stays_in_the_envelope(env):
-    """Not a claim that a fixed action holds the band -- it does not, by design.
+    """Not a claim that a fixed action holds the band; it does not, by design.
     What must hold is that the observation contract survives real flight: each
     feature's pre-clip value stays within the bound its Box entry declares.
 
-    Not `env.observation_space.contains(obs_arr)` -- `_to_array` clips to
+    Not `env.observation_space.contains(obs_arr)`, because `_to_array` clips to
     those same bounds before returning (env.py:126-127), so containment holds
     by construction and could only ever catch a NaN, a shape mismatch, or a
     dtype problem, never a real excursion outside the declared range.
@@ -248,7 +248,7 @@ def test_both_engines_answer_the_agent_over_a_flight():
 
 def test_every_profile_publishes_its_control_positions():
     """A missing pos-norm property is an aircraft fact, so it is caught per
-    aircraft -- and so is the surface's sign, because a left/right pair need not
+    aircraft, and so is the surface's sign, because a left/right pair need not
     both follow the pilot convention and only the FDM can say which one does."""
     from aero_gym.simulators.jsbsim.aircraft import PROFILES
     from aero_gym.variables import ACTION_POSITION
@@ -278,14 +278,11 @@ def test_every_profile_publishes_its_control_positions():
 @pytest.mark.parametrize(
     "convert, expected_sign",
     [
-        # Identity: the override hands the right surface's raw reading straight
-        # through, and the 737 publishes that as the negation of its left one.
-        # A negative answer is therefore proof the property name came from the
-        # profile and not from OBSERVATION_MAP.
+        # Identity passes the right surface through, which the 737 publishes as
+        # its left negated: a negative answer proves the profile supplied the name.
         (lambda x: x, -1.0),
-        # The realistic escape hatch: an aircraft that exposes only its right
-        # aileron supplies the negation itself, and the canonical roll-right
-        # sign comes back out.
+        # The realistic escape hatch: a right-aileron-only aircraft supplies the
+        # negation itself, and the canonical roll-right sign comes back out.
         (lambda x: -x, 1.0),
     ],
 )
@@ -389,7 +386,7 @@ def test_initial_action_describes_the_aircrafts_startup_state():
 
 
 def test_elevator_position_follows_the_commanded_sign(env):
-    """Canonical +elevator is pitch-up, and the observed position must agree --
+    """Canonical +elevator is pitch-up, and the observed position must agree,
     asserted as a movement from the trimmed baseline, not against a constant."""
     env.reset(seed=0)
     _, _, _, _, info = env.step(np.array([0.0, 0.0, 0.0, 0.7], np.float32))
@@ -443,7 +440,7 @@ def test_initial_action_seeds_the_elevator_command_not_its_position():
 
 def test_reset_clears_controls_when_the_fdm_is_reused():
     """The viewer path keeps its FDM across episodes, so run_ic() alone would
-    leave episode N+1 holding whatever stick and rudder episode N ended on --
+    leave episode N+1 holding whatever stick and rudder episode N ended on,
     a visible jerk at the start of every episode.
 
     A viewer is attached because that is what suppresses the FDM rebuild, and
@@ -498,7 +495,7 @@ def test_reset_reuses_the_fdm_while_output_is_configured():
     """Discarding the FDM re-applies the FlightGear output directive, which
     rewrites a temp file and restarts the UDP stream. Neither belongs in the
     middle of a session that is streaming to an already-running FlightGear
-    (`launch_flightgear=False`), so that path keeps its FDM -- determinism is
+    (`launch_flightgear=False`), so that path keeps its FDM: determinism is
     a training concern and nothing is training while you are watching.
     """
     scenario = make_steady_flight_scenario(max_episode_steps=None)

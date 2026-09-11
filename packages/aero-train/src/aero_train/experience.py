@@ -1,6 +1,6 @@
 """Drives environments with an agent and yields segments.
 
-Runs inside a rollout worker. Steps all B environments in lockstep -- every env
+Runs inside a rollout worker. Steps all B environments in lockstep: every env
 steps once, then a single batched forward pass produces all B actions. The
 alternative, stepping each env independently, pays a forward pass per env.
 Lockstep's cost is that a slow env (notably one that is resetting, which
@@ -61,15 +61,8 @@ class ExperienceSource:
             valid[t] = live
             rewards[t] = np.where(live, reward, 0.0)
             terminated[t] = term & live
-            # Terminated dominates. A step can arrive with both flags set --
-            # AeroGymEnv computes them independently, so leaving the reward
-            # band on the same step that hits max_episode_steps sets both, and
-            # gymnasium's TimeLimit ORs truncated onto a terminating step
-            # identically -- and Segment rightly rejects that combination.
-            # Recording it as truncated would tell the learner to bootstrap
-            # past a genuinely terminal state, so the terminal flag wins.
-            # Normalized here rather than in the env because no env-level fix
-            # would reach TimeLimit.
+            # Terminated dominates, since calling a both-flags step truncated
+            # bootstraps past a terminal state. Here, as no env fix reaches TimeLimit.
             truncated[t] = trunc & live & ~term
             self._record_episodes(reward, term, trunc, live, episodes)
             self._obs = np.asarray(next_obs, np.float32)
@@ -160,10 +153,8 @@ def to_transitions(segment: Segment, gamma: float, n_step: int = 1) -> Transitio
             terminated.append(hit_terminal)
             steps.append(taken)
 
-    # np.asarray([], dtype) collapses to shape (0,), dropping the trailing
-    # obs_dim / act_shape axes an empty (all-invalid) segment still owns.
-    # Task 12 concatenates Transitions across segments, so a degenerate shape
-    # here would break concatenation instead of contributing zero rows.
+    # np.asarray([], dtype) collapses to (0,), dropping the trailing axes an
+    # all-invalid segment still owns, and breaks concatenation downstream.
     obs_shape = segment.obs.shape[2:]
     act_shape = segment.actions.shape[2:]
 

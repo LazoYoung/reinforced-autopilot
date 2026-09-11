@@ -258,9 +258,8 @@ class FlightGearViewer:
         if self.aircraft:
             args.append(f"--aircraft={self.aircraft}")
         args.extend(self.extra_args)
-        # Windows builds resolve their data directory relative to the working
-        # directory, so run from the bin dir there; elsewhere the install
-        # locates itself and the caller's cwd is the less surprising choice.
+        # Windows builds resolve their data directory relative to the cwd, so
+        # run from the bin dir there. Elsewhere the install locates itself.
         cwd = (os.path.dirname(exe) or None) if os.name == "nt" else None
         self._process = subprocess.Popen(args, cwd=cwd)
         bundle = _containing_bundle(exe) if sys.platform == "darwin" else None

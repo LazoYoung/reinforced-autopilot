@@ -22,8 +22,7 @@ AOA_LIMIT_DEG = 20.0
 FLOOR_ALTITUDE_FT = 1000.0
 
 # The only two bounds not derived from a termination condition. _to_array clips,
-# so an excursion saturates rather than wrecking the observation scale, and an
-# aircraft rolling faster than this is about to terminate on ROLL_LIMIT_DEG.
+# so an excursion saturates instead of wrecking the observation scale.
 ROLL_RATE_SCALE_DEG_S = 60.0
 PITCH_RATE_SCALE_DEG_S = 30.0
 
@@ -84,9 +83,8 @@ def make_steady_flight_scenario(
             VariableSpec(
                 "deg", -HEADING_BAND_DEG, HEADING_BAND_DEG, "signed shortest-path heading error"
             ),
-            # target - current, wrapped the short way: positive means the
-            # target is to the right of current heading (turn right to close
-            # it) -- the opposite convention from altitude_error_ft above.
+            # target - current, wrapped short: positive means turn right to
+            # close it, the opposite convention from altitude_error_ft above.
             lambda obs: heading_error_deg(obs[V.HEADING], target_heading_deg),
         ),
         raw(V.VERTICAL_SPEED, -VERTICAL_SPEED_BAND_FPM, VERTICAL_SPEED_BAND_FPM),
@@ -102,28 +100,26 @@ def make_steady_flight_scenario(
     )
 
     def reward_fn(t: Transition) -> tuple[float, bool]:
+        """Reward in [0, 1] inside the band: 1.0 on target, 0.0 at the corner.
+
+        Never negative in band, by design. Leaving the band ends the episode,
+        so under a strictly-negative reward quitting on step 1 would score ~0
+        and beat any real flying; Transition carries no elapsed-step count,
+        so the reward function cannot price a death penalty itself.
+        """
         obs = t.obs
         alt = abs(obs[V.ALTITUDE] - target_altitude_ft) / ALTITUDE_BAND_FT
         hdg = abs(heading_error_deg(obs[V.HEADING], target_heading_deg)) / HEADING_BAND_DEG
         vs = abs(obs[V.VERTICAL_SPEED]) / VERTICAL_SPEED_BAND_FPM
-        # Each term is normalized by its own band limit, so inside the band all
-        # three are <= 1 and the reward is in [0, 1]: 1.0 on target, 0.0 at the
-        # corner. That it is never negative in band is the point. Leaving the
-        # band ends the episode, and under the old strictly-negative reward
-        # that would have made quitting on step 1 score ~0 and beat any real
-        # flying -- Transition carries no elapsed-step count, so the reward
-        # function cannot see how much episode it is throwing away and cannot
-        # price a death penalty. Not clamped below: a violent excursion scores
-        # slightly negative on its final step, a small penalty for the manner
-        # of failure that never competes with the forfeited future reward.
+        # Not clamped below: a violent excursion scores slightly negative on its
+        # final step, which never competes with the forfeited future reward.
         reward = 1.0 - (alt + hdg + vs) / 3.0
         terminated = (
             alt > 1.0
             or hdg > 1.0
             or vs > 1.0
-            # Envelope guards. Mostly preempted by the band, but |roll| can
-            # exceed the limit inside it during a fast roll, and the floor
-            # matters for a scenario configured with a low target altitude.
+            # Mostly preempted by the band, but a fast roll can exceed the limit
+            # inside it, and the floor matters at a low target altitude.
             or abs(obs[V.ROLL]) > ROLL_LIMIT_DEG
             or abs(obs[V.PITCH]) > PITCH_LIMIT_DEG
             or abs(obs[V.AOA]) > AOA_LIMIT_DEG

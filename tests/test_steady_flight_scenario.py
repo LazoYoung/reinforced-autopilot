@@ -302,9 +302,8 @@ def test_the_scenario_is_discoverable_by_name():
     assert build_scenario("steady_flight", {"aircraft": "737"}).aircraft == "737"
 
 
-# The golden pin below was recorded before the sandbox refactor began, against
-# the implementation runs/*/best.pt was trained on. Only the adapter helpers
-# may change; the constants must not.
+# The golden pin below predates the sandbox refactor: it fixes the implementation
+# runs/*/best.pt was trained against. Only the adapter helpers may change, not the constants.
 
 PROBE_OBS = {
     V.ALTITUDE: 5180.0,

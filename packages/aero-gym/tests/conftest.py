@@ -12,7 +12,7 @@ class FakeSimulator(Simulator):
 
     def __init__(self, dt: float = 1.0 / 120.0) -> None:
         self._dt = dt
-        self.reset_calls: list[Scenario] = []
+        self.reset_calls: list[tuple[str, InitialConditions, int]] = []
         self.controls: dict[V, float] = {}
         self.run_count = 0
         self.closed = False
@@ -23,10 +23,15 @@ class FakeSimulator(Simulator):
     def dt(self) -> float:
         return self._dt
 
-    def reset(self, scenario: Scenario) -> None:
-        self.reset_calls.append(scenario)
-        self.state[V.ALTITUDE] = scenario.initial_conditions.altitude_ft
-        self.state[V.HEADING] = scenario.initial_conditions.heading_deg
+    def reset(
+        self,
+        aircraft: str,
+        initial_conditions: InitialConditions,
+        settle_steps: int = 1,
+    ) -> None:
+        self.reset_calls.append((aircraft, initial_conditions, settle_steps))
+        self.state[V.ALTITUDE] = initial_conditions.altitude_ft
+        self.state[V.HEADING] = initial_conditions.heading_deg
 
     def set_control(self, var: V, value: float) -> None:
         self.controls[var] = value

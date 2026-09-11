@@ -60,7 +60,11 @@ class AeroGymEnv(gym.Env):
         if self.render_mode == "flightgear" and not self._visualization_started:
             self.simulator.enable_visualization()
             self._visualization_started = True
-        self.simulator.reset(self.scenario)
+        self.simulator.reset(
+            self.scenario.aircraft,
+            self.scenario.initial_conditions,
+            self._steps_per_action,
+        )
         self._elapsed_steps = 0
         self._next_frame_deadline = None
         obs_dict = self._observe()

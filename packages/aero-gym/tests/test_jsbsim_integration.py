@@ -15,6 +15,11 @@ from aero_gym.simulators.jsbsim import JSBSimSimulator
 from aero_gym.variables import OBSERVATION_SPECS, FlightVariable as V
 
 
+def _ic(scenario):
+    """The three values the narrowed Simulator.reset takes, from a scenario."""
+    return scenario.aircraft, scenario.initial_conditions, 12
+
+
 @pytest.fixture(scope="module")
 def env():
     scenario = make_steady_flight_scenario(max_episode_steps=None)
@@ -95,7 +100,7 @@ def test_flightgear_output_streams_udp_packets():
     sim = JSBSimSimulator()
     try:
         sim.enable_visualization(port=port, launch_flightgear=False)
-        sim.reset(make_steady_flight_scenario())
+        sim.reset(*_ic(make_steady_flight_scenario()))
         for _ in range(120):
             sim.run()
         packet, _ = sock.recvfrom(4096)
@@ -127,7 +132,7 @@ class _StubViewer:
 def _reset_with_viewer(scenario, viewer):
     sim = JSBSimSimulator()
     sim._viewer = viewer
-    sim.reset(scenario)
+    sim.reset(*_ic(scenario))
     return sim
 
 
@@ -154,7 +159,7 @@ def test_the_737_starts_clean_and_trimmed():
     """JSBSim's 737 initialises gear-down and untrimmed, which will not cruise."""
     sim = JSBSimSimulator()
     try:
-        sim.reset(make_steady_flight_scenario(aircraft="737"))
+        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737")))
         fdm = sim._fdm
         assert fdm["gear/gear-cmd-norm"] == 0.0
         assert fdm["fcs/throttle-cmd-norm[0]"] == pytest.approx(0.85)
@@ -167,7 +172,7 @@ def test_the_737_starts_clean_and_trimmed():
 def test_c172p_still_gets_the_piston_controls_it_always_had():
     sim = JSBSimSimulator()
     try:
-        sim.reset(make_steady_flight_scenario())
+        sim.reset(*_ic(make_steady_flight_scenario()))
         assert sim._fdm["fcs/mixture-cmd-norm"] == 1.0
         assert sim._fdm["fcs/throttle-cmd-norm"] == pytest.approx(0.7)
     finally:
@@ -198,7 +203,7 @@ def test_the_throttle_action_reaches_every_engine():
     """
     sim = JSBSimSimulator()
     try:
-        sim.reset(make_steady_flight_scenario(aircraft="737"))
+        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737")))
         sim.set_control(V.THROTTLE, 0.3)
         sim.run()
         assert sim._fdm["fcs/throttle-cmd-norm[0]"] == pytest.approx(0.3)
@@ -210,7 +215,7 @@ def test_the_throttle_action_reaches_every_engine():
 def test_a_single_engine_aircraft_still_takes_its_throttle():
     sim = JSBSimSimulator()
     try:
-        sim.reset(make_steady_flight_scenario())
+        sim.reset(*_ic(make_steady_flight_scenario()))
         sim.set_control(V.THROTTLE, 0.42)
         sim.run()
         assert sim._fdm["fcs/throttle-cmd-norm"] == pytest.approx(0.42)
@@ -222,8 +227,8 @@ def test_the_engine_count_follows_a_change_of_aircraft():
     """The same simulator can be reset onto a different model mid-life."""
     sim = JSBSimSimulator()
     try:
-        sim.reset(make_steady_flight_scenario())
-        sim.reset(make_steady_flight_scenario(aircraft="737"))
+        sim.reset(*_ic(make_steady_flight_scenario()))
+        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737")))
         sim.set_control(V.THROTTLE, 0.25)
         sim.run()
         assert sim._fdm["fcs/throttle-cmd-norm[1]"] == pytest.approx(0.25)
@@ -256,11 +261,8 @@ def test_every_profile_publishes_its_control_positions():
     for model in PROFILES:
         sim = JSBSimSimulator()
         scenario = make_steady_flight_scenario(aircraft=model, max_episode_steps=None)
-        scenario = dataclasses.replace(
-            scenario, observation_variables=tuple(ACTION_POSITION.values())
-        )
         try:
-            sim.reset(scenario)
+            sim.reset(*_ic(scenario))
             for var in ACTION_POSITION.values():
                 assert np.isfinite(sim.observe(var)), f"{model}: {var.name}"
             for action in (V.ELEVATOR, V.AILERON, V.RUDDER):
@@ -307,7 +309,7 @@ def test_a_profile_override_replaces_both_the_property_and_its_sign(
     )
     sim = JSBSimSimulator()
     try:
-        sim.reset(make_steady_flight_scenario(aircraft="737", max_episode_steps=None))
+        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737", max_episode_steps=None)))
         sim.set_control(V.AILERON, 0.5)
         for _ in range(20):
             sim.run()
@@ -319,6 +321,8 @@ def test_a_profile_override_replaces_both_the_property_and_its_sign(
 def test_an_unpublished_property_names_the_variable_the_property_and_the_model(
     monkeypatch,
 ):
+    """Asserted on observe(), which AeroGymEnv.reset calls on the line after
+    simulator.reset(), so the failure still lands inside reset()."""
     from aero_gym.simulator import SimulatorError
     from aero_gym.simulators.jsbsim import properties
 
@@ -332,10 +336,11 @@ def test_an_unpublished_property_names_the_variable_the_property_and_the_model(
         ),
     )
     try:
+        sim.reset(*_ic(scenario))
         with pytest.raises(
             SimulatorError, match=r"AOS.*'fcs/no-such-property'.*'c172p'"
         ):
-            sim.reset(dataclasses.replace(scenario, observation_variables=(V.AOS,)))
+            sim.observe(V.AOS)
     finally:
         sim.close()
 
@@ -451,7 +456,7 @@ def test_reset_clears_controls_when_the_fdm_is_reused():
     sim = JSBSimSimulator()
     sim._viewer = _StubViewer(aircraft="c172p")
     try:
-        sim.reset(scenario)
+        sim.reset(*_ic(scenario))
         fresh = {var: sim.get_control(var) for var in scenario.action_variables}
         assert any(abs(v) > 0.1 for v in fresh.values()), "expected a non-trivial startup state"
 
@@ -460,7 +465,7 @@ def test_reset_clears_controls_when_the_fdm_is_reused():
         for _ in range(20):
             sim.run()
 
-        sim.reset(scenario)
+        sim.reset(*_ic(scenario))
         assert sim._fdm is not None, "the viewer path must not rebuild the FDM"
         for var in scenario.action_variables:
             assert sim.get_control(var) == pytest.approx(fresh[var], abs=1e-6), var.name
@@ -502,9 +507,9 @@ def test_reset_reuses_the_fdm_while_output_is_configured():
     sim = JSBSimSimulator()
     try:
         sim.enable_visualization(port=5599, launch_flightgear=False)
-        sim.reset(scenario)
+        sim.reset(*_ic(scenario))
         first = sim._fdm
-        sim.reset(scenario)
+        sim.reset(*_ic(scenario))
         assert sim._fdm is first, "the streaming path must not rebuild the FDM"
     finally:
         sim.close()
@@ -518,7 +523,7 @@ def test_reapplying_the_output_directive_does_not_orphan_the_previous_one():
     sim = JSBSimSimulator()
     try:
         sim.enable_visualization(port=5599, launch_flightgear=False)
-        sim.reset(scenario)
+        sim.reset(*_ic(scenario))
         stale = sim._directive_path
         assert stale is not None and stale.exists()
         # Re-applying is what a rebuild does; enable_visualization takes the

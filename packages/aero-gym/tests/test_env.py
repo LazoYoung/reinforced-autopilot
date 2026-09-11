@@ -27,11 +27,29 @@ def test_spaces_follow_scenario_selection(initial_conditions, fake_simulator):
 def test_reset_applies_scenario_and_returns_obs(scenario, fake_simulator):
     env = AeroGymEnv(scenario, simulator=fake_simulator)
     obs, info = env.reset(seed=0)
-    assert fake_simulator.reset_calls == [scenario]
+    assert fake_simulator.reset_calls == [(scenario.aircraft, scenario.initial_conditions, 12)]
     assert obs.shape == env.observation_space.shape
     alt_index = scenario.observation_variables.index(V.ALTITUDE)
     assert obs[alt_index] == pytest.approx(5000.0)
     assert info["obs"][V.HEADING] == pytest.approx(270.0)
+
+
+def test_the_env_hands_the_simulator_only_the_aircraft_and_the_conditions(
+    scenario, fake_simulator
+):
+    """The backend is handed what it needs, not the whole task definition.
+
+    settle_steps is asserted too: it replaces the agent_hz the backend used to
+    read off the scenario, and a backend given 1 instead would return a stale
+    first observation on every episode.
+    """
+    env = AeroGymEnv(scenario, simulator=fake_simulator)
+    env.reset(seed=0)
+    (aircraft, conditions, settle_steps), = fake_simulator.reset_calls
+    assert aircraft == "c172p"
+    assert conditions is scenario.initial_conditions
+    # 120 Hz physics at 10 Hz agent rate
+    assert settle_steps == 12
 
 
 def test_step_runs_physics_and_applies_controls(scenario, fake_simulator):

@@ -6,7 +6,7 @@ import math
 import tempfile
 from pathlib import Path
 
-from aero_gym.scenario import Scenario
+from aero_gym.scenario import InitialConditions
 from aero_gym.simulator import Simulator, SimulatorError
 from aero_gym.variables import FlightVariable
 from .aircraft import AircraftProfile, profile_for
@@ -44,7 +44,12 @@ class JSBSimSimulator(Simulator):
     def dt(self) -> float:
         return self._dt
 
-    def reset(self, scenario: Scenario) -> None:
+    def reset(
+        self,
+        aircraft: str,
+        initial_conditions: InitialConditions,
+        settle_steps: int = 1,
+    ) -> None:
         """Put the FDM at the scenario's initial condition, engines running.
 
         Episodes from the same seed are bit-identical, because the FDM is
@@ -63,9 +68,14 @@ class JSBSimSimulator(Simulator):
         Returns only once a full agent step has been simulated, so the first
         observation reports settled positions rather than the zeros JSBSim holds
         until ``run()`` is called.
+
+        Does not pre-read the observed variables. AeroGymEnv.reset calls
+        _observe() on the next line, which reads every one of them and raises
+        the same SimulatorError from observe(), so the failure still surfaces
+        inside reset() rather than mid-rollout.
         """
-        ic = scenario.initial_conditions
-        profile = profile_for(scenario.aircraft)
+        ic = initial_conditions
+        profile = profile_for(aircraft)
         # observe() resolves per-aircraft property overrides through it
         self._profile = profile
         if self._viewer is not None:
@@ -83,7 +93,7 @@ class JSBSimSimulator(Simulator):
             # Discarded, not reset: see the determinism contract above.
             # `_visualization` too, since output can be configured without a viewer.
             self._fdm = None
-        fdm = self._ensure_fdm(scenario.aircraft)
+        fdm = self._ensure_fdm(aircraft)
         fdm["ic/lat-geod-deg"] = ic.latitude_deg
         fdm["ic/long-gc-deg"] = ic.longitude_deg
         fdm["ic/h-sl-ft"] = ic.altitude_ft
@@ -106,7 +116,7 @@ class JSBSimSimulator(Simulator):
             fdm[prop] = value
         # JSBSim recomputes fcs/*-pos-norm only inside run(), so until one agent
         # step has settled every position property reads 0 against a live command.
-        for _ in range(max(1, round(1.0 / (self._dt * scenario.agent_hz)))):
+        for _ in range(max(1, settle_steps)):
             self.run()
         if self._viewer is not None and not self._viewer_synced:
             # Nothing renders while FlightGear is still on its splash screen.
@@ -114,16 +124,6 @@ class JSBSimSimulator(Simulator):
             if self._viewer.wait_until_ready():
                 self._start_cockpit_sync(fdm)
             self._viewer_synced = True
-        self._validate_observations(scenario)
-
-    def _validate_observations(self, scenario: Scenario) -> None:
-        """Read every observed variable once so a missing property fails here.
-
-        Without it the failure surfaces mid-rollout, with nothing pointing at
-        the aircraft profile as the cause.
-        """
-        for var in scenario.observation_variables:
-            self.observe(var)
 
     def _start_cockpit_sync(self, fdm) -> None:
         """Supply the cockpit state FlightGear's disabled flight model can't.

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import abc
 
-from .scenario import Scenario
+from .scenario import InitialConditions
 from .variables import FlightVariable
 
 
@@ -27,8 +27,23 @@ class Simulator(abc.ABC):
         """Physics timestep in seconds."""
 
     @abc.abstractmethod
-    def reset(self, scenario: Scenario) -> None:
-        """Load the scenario's aircraft and apply its initial conditions."""
+    def reset(
+        self,
+        aircraft: str,
+        initial_conditions: InitialConditions,
+        settle_steps: int = 1,
+    ) -> None:
+        """Load `aircraft`, apply `initial_conditions`, then settle.
+
+        `settle_steps` physics steps are run before returning, because a
+        backend may only recompute control-position properties inside run(),
+        leaving them stale against a live command until one step has passed.
+        The caller passes its own steps-per-agent-step, so the first
+        observation of an episode reports settled positions.
+
+        Takes the two values a backend actually needs rather than a Scenario,
+        so no backend has to know what a task is.
+        """
 
     @abc.abstractmethod
     def set_control(self, var: FlightVariable, value: float) -> None:

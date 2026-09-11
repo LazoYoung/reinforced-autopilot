@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from aero_gym import AeroGymEnv
-from aero_gym.scenario import Scenario, Transition, fixed_setup
+from aero_gym.scenario import InitialConditions, Scenario, Transition, fixed_setup
 from aero_gym.variables import FlightVariable as V
 from conftest import FakeSimulator
 
@@ -255,3 +255,64 @@ def test_a_setup_missing_a_declared_context_key_names_the_key_and_the_scenario()
     env = AeroGymEnv(scenario, simulator=FakeSimulator())
     with pytest.raises(KeyError, match=r"declared.*target_altitude_ft"):
         env.reset(seed=0)
+
+
+def _bounded_scenario(low=-100.0, high=100.0):
+    from aero_gym.scenario import ObservationFeature, Scenario, fixed_setup
+    from aero_gym.variables import VariableSpec
+
+    return Scenario(
+        name="bounded",
+        setup_fn=fixed_setup(InitialConditions(0.0, 0.0, 5000.0, 270.0)),
+        reward_fn=lambda t: (0.0, False),
+        observation_variables=(V.ROLL,),
+        observation_features=(
+            ObservationFeature(
+                "roll", VariableSpec("deg", low, high, "roll"), lambda obs, ctx: obs[V.ROLL]
+            ),
+        ),
+    )
+
+
+def test_a_saturated_observation_warns_and_names_the_feature(fake_simulator):
+    """np.clip makes an out-of-range feature look in-range, which is a silently
+    mis-scaled input rather than a crash."""
+    env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
+    env.reset(seed=0)
+    fake_simulator.state[V.ROLL] = 250.0
+    with pytest.warns(RuntimeWarning, match=r"'roll'.*250"):
+        obs, *_ = env.step(np.zeros(env.action_space.shape, np.float32))
+    assert obs[0] == pytest.approx(100.0)
+
+
+def test_the_saturation_warning_fires_once_per_feature_not_once_per_step(
+    fake_simulator, recwarn
+):
+    """At 10 Hz an excursion would otherwise emit a warning every 100 ms for
+    the rest of the run, which is how a useful warning becomes noise."""
+    env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
+    env.reset(seed=0)
+    fake_simulator.state[V.ROLL] = 250.0
+    for _ in range(5):
+        env.step(np.zeros(env.action_space.shape, np.float32))
+    assert len([w for w in recwarn if issubclass(w.category, RuntimeWarning)]) == 1
+
+
+def test_an_in_bounds_observation_stays_silent(fake_simulator, recwarn):
+    """The other half: a warning that always fires proves nothing."""
+    env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
+    env.reset(seed=0)
+    fake_simulator.state[V.ROLL] = 12.0
+    for _ in range(5):
+        env.step(np.zeros(env.action_space.shape, np.float32))
+    assert [w for w in recwarn if issubclass(w.category, RuntimeWarning)] == []
+
+
+def test_a_nan_feature_is_reported_as_nan_not_as_saturation(fake_simulator):
+    """NaN trips the same comparison, since NaN != NaN, and calling it
+    saturation would send the reader looking for an excursion that never was."""
+    env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
+    env.reset(seed=0)
+    fake_simulator.state[V.ROLL] = float("nan")
+    with pytest.warns(RuntimeWarning, match=r"'roll'.*NaN"):
+        env.step(np.zeros(env.action_space.shape, np.float32))

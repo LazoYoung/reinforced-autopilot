@@ -95,9 +95,9 @@ def test_trimmed_flight_stays_in_the_envelope(env):
     feature's pre-clip value stays within the bound its Box entry declares.
 
     Not `env.observation_space.contains(obs_arr)`, because `_to_array` clips to
-    those same bounds before returning (env.py:126-127), so containment holds
-    by construction and could only ever catch a NaN, a shape mismatch, or a
-    dtype problem, never a real excursion outside the declared range.
+    those same bounds before returning, so containment holds by construction
+    and could only ever catch a NaN, a shape mismatch, or a dtype problem,
+    never a real excursion outside the declared range.
     """
     env.reset(seed=0)
     action = np.array([0.05, 0.0, 0.0, 0.7], np.float32)
@@ -109,8 +109,6 @@ def test_trimmed_flight_stays_in_the_envelope(env):
             assert feature.spec.low <= value <= feature.spec.high, (
                 f"{feature.name}={value} outside [{feature.spec.low}, {feature.spec.high}]"
             )
-        if terminated:
-            break
     assert info["obs"][V.ALTITUDE] > 4000.0
 
 

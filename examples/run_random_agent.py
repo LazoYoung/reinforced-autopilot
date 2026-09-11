@@ -12,7 +12,7 @@ import argparse
 import numpy as np
 
 from aero_gym import AeroGymEnv, FlightVariable
-from aero_gym.scenarios import SteadyFlightParams, make_steady_flight_scenario
+from aero_gym.registry import build_scenario
 from aero_gym.simulators.jsbsim.aircraft import profile_for
 
 
@@ -25,7 +25,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    scenario = make_steady_flight_scenario(SteadyFlightParams(aircraft=args.aircraft))
+    scenario = build_scenario("steady_flight", {"aircraft": args.aircraft})
     env = AeroGymEnv(scenario, render_mode="flightgear" if args.flightgear else None)
     rng = np.random.default_rng(0)
 

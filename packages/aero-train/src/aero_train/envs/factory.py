@@ -37,37 +37,32 @@ def _make_scenario_env_fn(cfg) -> Callable[[], gym.Env]:
     never loads it and the CartPole integration test stays honest proof that
     the learning stack runs with no flight model near it. This module is the
     only place in aero_train allowed the import (tests/test_dependency_rules).
+
+    The registration and the params object are resolved eagerly, here, and only
+    registration.build() is deferred into the returned callable, because each
+    worker must construct its own environments in its own process.
     """
     from aero_gym import AeroGymEnv
-    from aero_gym.scenarios import SteadyFlightParams, make_steady_flight_scenario
+    from aero_gym.registry import build_params, lookup
 
     from .delta import DeltaAction
     from .scale import ScaleObservation
 
-    scenarios = {"steady_flight": (make_steady_flight_scenario, SteadyFlightParams)}
-    entry = scenarios.get(cfg.scenario)
-    if entry is None:
-        raise ValueError(
-            f"unknown env.scenario {cfg.scenario!r}; known scenarios are "
-            f"{sorted(scenarios)}"
-        )
-    factory, params_type = entry
-    try:
-        # Bound once, here, so a misspelled scenario parameter fails at factory
-        # construction rather than eight environments later inside a worker.
-        params = params_type(**dict(cfg.scenario_kwargs))
-    except TypeError as exc:
-        raise ValueError(
-            f"env.scenario_kwargs does not fit scenario {cfg.scenario!r}: {exc}"
-        ) from exc
-
+    # Resolved before any environment exists, so a misspelled parameter fails
+    # once here rather than eight times inside workers.
+    registration = lookup(cfg.scenario)
+    params = build_params(registration, cfg.params)
     max_episode_steps = cfg.max_episode_steps
     render_mode = cfg.render_mode
     delta = cfg.delta
 
     def _make() -> gym.Env:
-        scenario = factory(params)
+        scenario = (
+            registration.build() if params is None else registration.build(params)
+        )
         if max_episode_steps is not None:
+            # Applied here rather than as a params field every scenario would
+            # have to repeat; replace re-runs the frozen dataclass validation.
             scenario = dataclasses.replace(scenario, max_episode_steps=max_episode_steps)
         env = AeroGymEnv(scenario, render_mode=render_mode)
         return DeltaAction(ScaleObservation(env), delta=delta)

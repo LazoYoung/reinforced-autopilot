@@ -37,7 +37,10 @@ class EnvConfig:
     """
 
     max_episode_steps: int | None = None
-    scenario_kwargs: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
+    """Fields of the scenario's params dataclass. Validated against it at
+    factory construction, so a misspelled name fails before any env is built."""
+
     render_mode: str | None = None
     delta: float = DEFAULT_DELTA
 
@@ -64,7 +67,7 @@ class EnvConfig:
             # is the failure mode this whole module exists to prevent.
             for name, value in (
                 ("render_mode", self.render_mode),
-                ("scenario_kwargs", self.scenario_kwargs),
+                ("params", self.params),
                 ("delta", self.delta != DEFAULT_DELTA or None),
             ):
                 if value:
@@ -72,10 +75,10 @@ class EnvConfig:
                         f"env.{name} only applies to an aero_gym scenario env; "
                         "set env.scenario instead of env.id"
                     )
-        if "max_episode_steps" in self.scenario_kwargs:
+        if "max_episode_steps" in self.params:
             raise ValueError(
                 "set the episode limit with env.max_episode_steps, not inside "
-                "env.scenario_kwargs: one setting, one place"
+                "env.params: one setting, one place"
             )
 
 
@@ -271,8 +274,18 @@ def config_from_dict(d: dict[str, Any]) -> TrainConfig:
         raise ValueError(
             f"unknown algo.type {algo_type!r}; known types are {sorted(ALGO_CONFIGS)}"
         )
+    env_raw = dict(d.pop("env", {}) or {})
+    if "scenario_kwargs" in env_raw:
+        # Every checkpoint on disk embeds its whole config dict, so dropping the
+        # old name outright would make each existing best.pt unresumable.
+        if "params" in env_raw:
+            raise ValueError(
+                "env carries both `params` and the superseded `scenario_kwargs`; "
+                "keep only `params`"
+            )
+        env_raw["params"] = env_raw.pop("scenario_kwargs")
     nested = {
-        "env": _build(EnvConfig, dict(d.pop("env", {}) or {}), "env"),
+        "env": _build(EnvConfig, env_raw, "env"),
         "algo": _build(ALGO_CONFIGS[algo_type], algo_raw, "algo"),
         "rollout": _build(RolloutConfig, dict(d.pop("rollout", {}) or {}), "rollout"),
         "tracking": _build(TrackingConfig, dict(d.pop("tracking", {}) or {}), "tracking"),

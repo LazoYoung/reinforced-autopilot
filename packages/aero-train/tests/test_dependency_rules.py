@@ -145,3 +145,33 @@ def test_aero_gym_never_imports_aero_train():
         if "aero_train" in imports
     }
     assert not violations, f"aero_train imported by aero_gym module(s): {violations}"
+
+
+REPO_ROOT = PACKAGES_DIR.parent
+SANDBOX_SRC = REPO_ROOT / "src" / "sandbox"
+
+
+def test_no_installed_package_imports_the_sandbox():
+    """The sandbox is the top layer: it imports aero_gym, and nothing imports
+    it. A package that named a task would put task knowledge back inside the
+    library the whole sandbox exists to keep it out of."""
+    violations = {
+        str(path): sorted(imports)
+        for src_root in (AERO_GYM_SRC, AERO_TRAIN_SRC)
+        for path in sorted(src_root.rglob("*.py"))
+        for imports in [_top_level_imports(path)]
+        if "sandbox" in imports
+    }
+    assert not violations, f"sandbox imported by installed package module(s): {violations}"
+
+
+def test_the_sandbox_does_not_import_aero_train():
+    """It defines tasks against aero_gym; the trainer consumes them through the
+    registry, never the other way round."""
+    violations = {
+        str(path.relative_to(SANDBOX_SRC)): sorted(imports)
+        for path in sorted(SANDBOX_SRC.rglob("*.py"))
+        for imports in [_top_level_imports(path)]
+        if "aero_train" in imports
+    }
+    assert not violations, f"aero_train imported by sandbox module(s): {violations}"

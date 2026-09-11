@@ -158,6 +158,37 @@ def test_yaml_round_trip(tmp_path):
     assert config_from_dict(config_to_dict(cfg)) == cfg
 
 
+def test_a_checkpoint_written_before_the_rename_still_loads():
+    """config_to_dict embeds the whole config, so every checkpoint on disk
+    carries env.scenario_kwargs and _build raises TypeError on unknown keys:
+    without this, `autopilot resume` and `autopilot eval` fail on best.pt."""
+    cfg = config_from_dict(
+        {
+            "run_name": "legacy",
+            "total_steps": 100,
+            "env": {"scenario": "steady_flight", "scenario_kwargs": {"aircraft": "737"}},
+            "algo": {"type": "random"},
+        }
+    )
+    assert cfg.env.params == {"aircraft": "737"}
+
+
+def test_a_config_carrying_both_names_is_rejected():
+    with pytest.raises(ValueError, match="scenario_kwargs"):
+        config_from_dict(
+            {
+                "run_name": "both",
+                "total_steps": 100,
+                "env": {
+                    "scenario": "steady_flight",
+                    "params": {"aircraft": "737"},
+                    "scenario_kwargs": {"aircraft": "c172p"},
+                },
+                "algo": {"type": "random"},
+            }
+        )
+
+
 def test_flatten_config_produces_dotted_string_params():
     flat = flatten_config(config_from_dict(MINIMAL))
     assert flat["rollout.n_workers"] == "1"
@@ -181,7 +212,7 @@ def test_scenario_only_settings_are_rejected_on_the_gymnasium_branch():
     # shares, so a message naming the wrong field cannot satisfy it.
     for name, kwargs in (
         ("render_mode", {"render_mode": "flightgear"}),
-        ("scenario_kwargs", {"scenario_kwargs": {"aircraft": "737"}}),
+        ("params", {"params": {"aircraft": "737"}}),
         ("delta", {"delta": 0.2}),
     ):
         with pytest.raises(ValueError, match=rf"env\.{name}"):
@@ -192,7 +223,7 @@ def test_the_episode_limit_has_exactly_one_home():
     from aero_train.config import EnvConfig
 
     with pytest.raises(ValueError, match="env.max_episode_steps"):
-        EnvConfig(scenario="steady_flight", scenario_kwargs={"max_episode_steps": 10})
+        EnvConfig(scenario="steady_flight", params={"max_episode_steps": 10})
 
 
 def test_render_mode_and_delta_are_validated():
@@ -214,7 +245,7 @@ def test_a_scenario_env_round_trips_through_a_config_dict():
             "run_name": "flight",
             "env": {
                 "scenario": "steady_flight",
-                "scenario_kwargs": {"aircraft": "737"},
+                "params": {"aircraft": "737"},
                 "render_mode": "flightgear",
                 "delta": 0.05,
             },

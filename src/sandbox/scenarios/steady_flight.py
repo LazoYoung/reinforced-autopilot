@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from aero_gym.registry import scenario
 from aero_gym.scenario import (
     EpisodeSetup,
     InitialConditions,
@@ -103,6 +104,7 @@ class SteadyFlightParams:
                 )
 
 
+@scenario("steady_flight", params=SteadyFlightParams)
 def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Scenario:
     """Level-flight hold task starting near KSFO by default.
 

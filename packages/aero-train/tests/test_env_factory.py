@@ -13,13 +13,13 @@ class _EnvCfg:
     id: str | None = None
     scenario: str | None = None
     max_episode_steps: int | None = None
-    scenario_kwargs: dict | None = None
+    params: dict | None = None
     render_mode: str | None = None
     delta: float = 0.1
 
     def __post_init__(self):
-        if self.scenario_kwargs is None:
-            object.__setattr__(self, "scenario_kwargs", {})
+        if self.params is None:
+            object.__setattr__(self, "params", {})
 
 
 def test_make_env_fn_builds_a_gymnasium_env():
@@ -63,9 +63,20 @@ def test_an_unknown_scenario_lists_the_known_ones():
         make_env_fn(_EnvCfg(scenario="loop_the_loop"))
 
 
-def test_a_misspelled_scenario_kwarg_fails_before_any_env_is_built():
-    with pytest.raises(ValueError, match="scenario_kwargs"):
-        make_env_fn(_EnvCfg(scenario="steady_flight", scenario_kwargs={"aircrafft": "737"}))
+def test_a_misspelled_scenario_param_fails_before_any_env_is_built():
+    with pytest.raises(ValueError, match=r"aircrafft.*aircraft"):
+        make_env_fn(_EnvCfg(scenario="steady_flight", params={"aircrafft": "737"}))
+
+
+def test_the_scenario_branch_plumbs_a_param_through_to_the_scenario():
+    """A param that reached build_params but not the builder would pass every
+    error-path test in this file."""
+    pytest.importorskip("jsbsim")
+    env = make_env_fn(_EnvCfg(scenario="steady_flight", params={"aircraft": "737"}))()
+    try:
+        assert env.unwrapped.scenario.aircraft == "737"
+    finally:
+        env.close()
 
 
 def test_the_scenario_branch_wraps_the_env_in_both_wrappers():

@@ -7,7 +7,7 @@ process rather than receive them pickled.
 
 from __future__ import annotations
 
-import inspect
+import dataclasses
 from typing import Callable
 
 import gymnasium as gym
@@ -39,36 +39,37 @@ def _make_scenario_env_fn(cfg) -> Callable[[], gym.Env]:
     only place in aero_train allowed the import (tests/test_dependency_rules).
     """
     from aero_gym import AeroGymEnv
-    from aero_gym.scenarios import make_steady_flight_scenario
+    from aero_gym.scenarios import SteadyFlightParams, make_steady_flight_scenario
 
     from .delta import DeltaAction
     from .scale import ScaleObservation
 
-    scenarios = {"steady_flight": make_steady_flight_scenario}
-    factory = scenarios.get(cfg.scenario)
-    if factory is None:
+    scenarios = {"steady_flight": (make_steady_flight_scenario, SteadyFlightParams)}
+    entry = scenarios.get(cfg.scenario)
+    if entry is None:
         raise ValueError(
             f"unknown env.scenario {cfg.scenario!r}; known scenarios are "
             f"{sorted(scenarios)}"
         )
-
-    kwargs = dict(cfg.scenario_kwargs)
-    if cfg.max_episode_steps is not None:
-        kwargs["max_episode_steps"] = cfg.max_episode_steps
+    factory, params_type = entry
     try:
-        # Bound once, here, so a misspelled scenario parameter fails at config
-        # load rather than eight environments later inside a worker.
-        inspect.signature(factory).bind_partial(**kwargs)
+        # Bound once, here, so a misspelled scenario parameter fails at factory
+        # construction rather than eight environments later inside a worker.
+        params = params_type(**dict(cfg.scenario_kwargs))
     except TypeError as exc:
         raise ValueError(
             f"env.scenario_kwargs does not fit scenario {cfg.scenario!r}: {exc}"
         ) from exc
 
+    max_episode_steps = cfg.max_episode_steps
     render_mode = cfg.render_mode
     delta = cfg.delta
 
     def _make() -> gym.Env:
-        env = AeroGymEnv(factory(**kwargs), render_mode=render_mode)
+        scenario = factory(params)
+        if max_episode_steps is not None:
+            scenario = dataclasses.replace(scenario, max_episode_steps=max_episode_steps)
+        env = AeroGymEnv(scenario, render_mode=render_mode)
         return DeltaAction(ScaleObservation(env), delta=delta)
 
     return _make

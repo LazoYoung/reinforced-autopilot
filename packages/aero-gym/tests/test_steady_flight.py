@@ -1,22 +1,20 @@
 from __future__ import annotations
 
+import dataclasses
+from dataclasses import fields
+
 import numpy as np
 import pytest
 
 from aero_gym.scenario import Transition
 from aero_gym.scenarios import make_steady_flight_scenario
-from aero_gym.scenarios.steady_flight import (
-    ALTITUDE_BAND_FT,
-    HEADING_BAND_DEG,
-    VERTICAL_SPEED_BAND_FPM,
-    heading_error_deg,
-)
+from aero_gym.scenarios.steady_flight import SteadyFlightParams, heading_error_deg
 from aero_gym.variables import FlightVariable as V
 
 
 def test_the_flight_condition_follows_the_aircraft():
     """5000 ft at 95 kts is a Cessna cruise; a 737 would stall there."""
-    ic = _setup(make_steady_flight_scenario(aircraft="737")).initial_conditions
+    ic = _setup(make_steady_flight_scenario(SteadyFlightParams(aircraft="737"))).initial_conditions
     assert ic.altitude_ft == 30000.0
     assert ic.airspeed_kts == 280.0
 
@@ -29,7 +27,9 @@ def test_c172p_keeps_the_flight_condition_it_always_had():
 
 def test_an_explicit_flight_condition_wins_over_the_aircrafts():
     ic = _setup(
-        make_steady_flight_scenario(aircraft="737", altitude_ft=12000.0, airspeed_kts=250.0)
+        make_steady_flight_scenario(
+            SteadyFlightParams(aircraft="737", altitude_ft=12000.0, airspeed_kts=250.0)
+        )
     ).initial_conditions
     assert ic.altitude_ft == 12000.0
     assert ic.airspeed_kts == 250.0
@@ -37,10 +37,86 @@ def test_an_explicit_flight_condition_wins_over_the_aircrafts():
 
 def test_one_overridden_value_does_not_drag_the_other_along():
     ic = _setup(
-        make_steady_flight_scenario(aircraft="737", altitude_ft=12000.0)
+        make_steady_flight_scenario(SteadyFlightParams(aircraft="737", altitude_ft=12000.0))
     ).initial_conditions
     assert ic.altitude_ft == 12000.0
     assert ic.airspeed_kts == 280.0
+
+
+def test_a_tweaked_band_reaches_the_bounds_the_reward_and_the_terminator():
+    """One knob, three places. A params field that only reached the Box would
+    leave the reward normalizing against the old number."""
+    scenario = make_steady_flight_scenario(SteadyFlightParams(altitude_band_ft=250.0))
+    bounds = {f.name: (f.spec.low, f.spec.high) for f in scenario.observation_features}
+    assert bounds["altitude_error_ft"] == (-250.0, 250.0)
+    # 5250 saturates only the altitude term (250/250 = 1.0); the averaged
+    # reward is 1 - 1/3, not 0 (0 needs all three terms at their corner).
+    reward, terminated = _evaluate(scenario, {V.ALTITUDE: 5250.0})
+    assert reward == pytest.approx(2.0 / 3.0)
+    assert not terminated
+    _, terminated = _evaluate(scenario, {V.ALTITUDE: 5251.0})
+    assert terminated
+
+
+def test_zero_jitter_gives_the_same_start_every_episode():
+    """The default, and the thing that keeps runs/*/best.pt comparable."""
+    scenario = make_steady_flight_scenario()
+    rng = np.random.default_rng(0)
+    setups = [scenario.setup_fn(rng) for _ in range(5)]
+    assert {s.initial_conditions.altitude_ft for s in setups} == {5000.0}
+    assert {s.initial_conditions.heading_deg for s in setups} == {270.0}
+
+
+def test_jitter_draws_a_different_start_each_episode():
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(altitude_jitter_ft=300.0, heading_jitter_deg=15.0)
+    )
+    rng = np.random.default_rng(0)
+    setups = [scenario.setup_fn(rng) for _ in range(5)]
+    altitudes = [s.initial_conditions.altitude_ft for s in setups]
+    assert len(set(altitudes)) == 5
+    assert all(4700.0 <= a <= 5300.0 for a in altitudes)
+
+
+def test_the_same_seed_draws_the_same_sequence_of_starts():
+    """Both directions. Without the different-seed half a constant sampler
+    passes this and every environment flies the identical episode."""
+    scenario = make_steady_flight_scenario(SteadyFlightParams(altitude_jitter_ft=300.0))
+
+    def draw(seed):
+        rng = np.random.default_rng(seed)
+        return [scenario.setup_fn(rng).initial_conditions.altitude_ft for _ in range(4)]
+
+    assert draw(0) == draw(0)
+    assert draw(0) != draw(1)
+
+
+def test_the_target_follows_the_jittered_start_so_it_stays_a_hold_task():
+    """A jittered start against a fixed target would silently turn a hold task
+    into a go-to task with a band far too narrow to be reachable."""
+    scenario = make_steady_flight_scenario(SteadyFlightParams(altitude_jitter_ft=300.0))
+    setup = scenario.setup_fn(np.random.default_rng(0))
+    assert setup.context["target_altitude_ft"] == setup.initial_conditions.altitude_ft
+
+
+def test_a_negative_jitter_is_rejected():
+    with pytest.raises(ValueError, match="altitude_jitter_ft"):
+        SteadyFlightParams(altitude_jitter_ft=-10.0)
+
+
+def test_a_non_positive_band_is_rejected():
+    """The bands are divisors in reward_fn; zero would produce inf or NaN."""
+    with pytest.raises(ValueError, match="altitude_band_ft"):
+        SteadyFlightParams(altitude_band_ft=0.0)
+
+
+def test_max_episode_steps_is_not_a_scenario_parameter():
+    """Every scenario has it, so repeating it in every params dataclass is
+    boilerplate; the factory applies it with dataclasses.replace instead."""
+    assert "max_episode_steps" not in {f.name for f in fields(SteadyFlightParams)}
+    scenario = dataclasses.replace(make_steady_flight_scenario(), max_episode_steps=7)
+    assert scenario.max_episode_steps == 7
+    assert len(scenario.observation_features) == 12
 
 
 def _setup(scenario):
@@ -66,7 +142,7 @@ def _evaluate(scenario, overrides=None):
 
 
 def test_on_target_scores_one_and_does_not_terminate():
-    scenario = make_steady_flight_scenario(aircraft="737")
+    scenario = make_steady_flight_scenario(SteadyFlightParams(aircraft="737"))
     reward, terminated = _evaluate(scenario)
     assert reward == pytest.approx(1.0)
     assert not terminated
@@ -77,9 +153,9 @@ def test_the_corner_of_the_band_scores_zero_and_does_not_terminate():
     reward, terminated = _evaluate(
         scenario,
         {
-            V.ALTITUDE: _setup(scenario).initial_conditions.altitude_ft + ALTITUDE_BAND_FT,
-            V.HEADING: (_setup(scenario).initial_conditions.heading_deg + HEADING_BAND_DEG) % 360.0,
-            V.VERTICAL_SPEED: VERTICAL_SPEED_BAND_FPM,
+            V.ALTITUDE: _setup(scenario).initial_conditions.altitude_ft + 500.0,
+            V.HEADING: (_setup(scenario).initial_conditions.heading_deg + 10.0) % 360.0,
+            V.VERTICAL_SPEED: 1000.0,
         },
     )
     assert reward == pytest.approx(0.0)
@@ -113,7 +189,7 @@ def test_the_floor_terminates_on_its_own():
     exercise the floor clause. A scenario with a low target altitude (the
     case the floor's code comment says it exists for) puts 999.0 comfortably
     inside the band (alt = 201/500) so the floor is what fires, alone."""
-    scenario = make_steady_flight_scenario(altitude_ft=1200.0)
+    scenario = make_steady_flight_scenario(SteadyFlightParams(altitude_ft=1200.0))
     _, terminated = _evaluate(scenario, {V.ALTITUDE: 999.0})
     assert terminated
 
@@ -166,13 +242,17 @@ def test_the_agent_sees_errors_and_positions_but_not_absolute_heading():
     assert "heading" not in names
 
 
-def test_every_feature_is_bounded_by_the_limit_that_terminates_on_it():
+def test_every_feature_is_bounded_by_its_params_band():
+    defaults = SteadyFlightParams()
     scenario = make_steady_flight_scenario()
     bounds = {f.name: (f.spec.low, f.spec.high) for f in scenario.observation_features}
-    assert bounds["altitude_error_ft"] == (-ALTITUDE_BAND_FT, ALTITUDE_BAND_FT)
-    assert bounds["heading_error_deg"] == (-HEADING_BAND_DEG, HEADING_BAND_DEG)
-    assert bounds["vertical_speed"] == (-VERTICAL_SPEED_BAND_FPM, VERTICAL_SPEED_BAND_FPM)
-    assert bounds["roll"] == (-75.0, 75.0)
+    assert bounds["altitude_error_ft"] == (-defaults.altitude_band_ft, defaults.altitude_band_ft)
+    assert bounds["heading_error_deg"] == (-defaults.heading_band_deg, defaults.heading_band_deg)
+    assert bounds["vertical_speed"] == (
+        -defaults.vertical_speed_band_fpm,
+        defaults.vertical_speed_band_fpm,
+    )
+    assert bounds["roll"] == (-defaults.roll_limit_deg, defaults.roll_limit_deg)
 
 
 def _feature(scenario, name):

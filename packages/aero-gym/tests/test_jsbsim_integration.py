@@ -10,9 +10,61 @@ import pytest
 jsbsim = pytest.importorskip("jsbsim")
 
 from aero_gym import AeroGymEnv
-from aero_gym.scenarios import make_steady_flight_scenario
+from aero_gym.scenario import InitialConditions, Scenario, fixed_setup, raw
 from aero_gym.simulators.jsbsim import JSBSimSimulator
-from aero_gym.variables import OBSERVATION_SPECS, FlightVariable as V
+from aero_gym.simulators.jsbsim.aircraft import profile_for
+from aero_gym.variables import ALL_ACTION_VARIABLES, OBSERVATION_SPECS, FlightVariable as V
+
+OBSERVED = (
+    V.ALTITUDE, V.HEADING, V.VERTICAL_SPEED, V.ROLL, V.PITCH, V.AOA,
+    V.ROLL_RATE, V.PITCH_RATE, V.ELEVATOR_POS, V.AILERON_POS,
+    V.RUDDER_POS, V.THROTTLE_POS,
+)
+
+# Narrowed only where a canonical bound is uselessly wide for a cruise, which
+# is what makes test_trimmed_flight_stays_in_the_envelope discriminate at all.
+_BOUNDS = {
+    V.VERTICAL_SPEED: (-1000.0, 1000.0),
+    V.ROLL: (-75.0, 75.0),
+    V.PITCH: (-45.0, 45.0),
+    V.AOA: (-20.0, 20.0),
+    V.ROLL_RATE: (-60.0, 60.0),
+    V.PITCH_RATE: (-30.0, 30.0),
+}
+
+
+def _scenario(aircraft: str = "c172p", observation_variables=OBSERVED, **overrides):
+    """A minimal flyable task, owned by this file.
+
+    Deliberately not the sandbox's steady_flight: these tests check that reset
+    honours initial conditions, that a trimmed aircraft keeps flying, and that
+    observations stay in declared bounds. None of that is about a reward band,
+    and importing the sandbox here would reverse the dependency arrow.
+    """
+    profile = profile_for(aircraft)
+    conditions = InitialConditions(
+        latitude_deg=37.6191,
+        longitude_deg=-122.3816,
+        altitude_ft=profile.cruise_altitude_ft,
+        heading_deg=270.0,
+        pitch_deg=0.0,
+        roll_deg=0.0,
+        airspeed_kts=profile.cruise_airspeed_kts,
+    )
+    return Scenario(
+        name="integration",
+        setup_fn=fixed_setup(conditions),
+        reward_fn=lambda t: (0.0, False),
+        action_variables=ALL_ACTION_VARIABLES,
+        observation_variables=observation_variables,
+        observation_features=tuple(
+            raw(v, *_BOUNDS[v]) if v in _BOUNDS else raw(v) for v in observation_variables
+        ),
+        aircraft=aircraft,
+        agent_hz=10.0,
+        max_episode_steps=None,
+        **overrides,
+    )
 
 
 def _ic(scenario):
@@ -23,7 +75,7 @@ def _ic(scenario):
 
 @pytest.fixture(scope="module")
 def env():
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     yield env
     env.close()
@@ -68,7 +120,7 @@ def test_trimmed_flight_stays_in_the_envelope(env):
 def test_controls_have_canonical_sign(env):
     """Pitch-up elevator command must raise pitch rate, and aileron-right must
     roll right; driving both hard on purpose saturates pitch_rate against
-    steady_flight's pinned bound, which is the clip doing its job. The mark
+    this scenario's pinned bound, which is the clip doing its job. The mark
     names only pitch_rate: a future change that saturates a different
     feature here should still show up as a warning."""
     env.reset(seed=0)
@@ -85,7 +137,7 @@ def test_controls_have_canonical_sign(env):
 
 
 def test_observations_cover_all_variables(env):
-    """All 15 canonical variables, not just the 12 steady_flight narrows to:
+    """All 15 canonical variables, not just the 12 this file's scenario narrows to:
     query the simulator directly rather than iterating `info["obs"]`, which
     only carries the scenario's observed subset and would silently drop
     YAW, YAW_RATE and AOS from this check without the test's name noticing."""
@@ -99,8 +151,6 @@ def test_flightgear_output_streams_udp_packets():
     """JSBSim must push native-FDM UDP packets to the configured port."""
     import socket
 
-    from aero_gym.scenarios import make_steady_flight_scenario
-
     port = 55511
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", port))
@@ -108,7 +158,7 @@ def test_flightgear_output_streams_udp_packets():
     sim = JSBSimSimulator()
     try:
         sim.enable_visualization(port=port, launch_flightgear=False)
-        sim.reset(*_ic(make_steady_flight_scenario()))
+        sim.reset(*_ic(_scenario()))
         for _ in range(120):
             sim.run()
         packet, _ = sock.recvfrom(4096)
@@ -147,7 +197,7 @@ def _reset_with_viewer(scenario, viewer):
 def test_the_viewer_is_told_which_aircraft_the_scenario_flies():
     """FlightGear otherwise loads its default aircraft and renders a Cessna."""
     viewer = _StubViewer()
-    sim = _reset_with_viewer(make_steady_flight_scenario(aircraft="737"), viewer)
+    sim = _reset_with_viewer(_scenario(aircraft="737"), viewer)
     try:
         assert viewer.aircraft == "737-300"
     finally:
@@ -156,7 +206,7 @@ def test_the_viewer_is_told_which_aircraft_the_scenario_flies():
 
 def test_an_explicitly_requested_flightgear_aircraft_is_left_alone():
     viewer = _StubViewer(aircraft="737-300-yoke")
-    sim = _reset_with_viewer(make_steady_flight_scenario(aircraft="737"), viewer)
+    sim = _reset_with_viewer(_scenario(aircraft="737"), viewer)
     try:
         assert viewer.aircraft == "737-300-yoke"
     finally:
@@ -167,7 +217,7 @@ def test_the_737_starts_clean_and_trimmed():
     """JSBSim's 737 initialises gear-down and untrimmed, which will not cruise."""
     sim = JSBSimSimulator()
     try:
-        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737")))
+        sim.reset(*_ic(_scenario(aircraft="737")))
         fdm = sim._fdm
         assert fdm["gear/gear-cmd-norm"] == 0.0
         assert fdm["fcs/throttle-cmd-norm[0]"] == pytest.approx(0.85)
@@ -180,7 +230,7 @@ def test_the_737_starts_clean_and_trimmed():
 def test_c172p_still_gets_the_piston_controls_it_always_had():
     sim = JSBSimSimulator()
     try:
-        sim.reset(*_ic(make_steady_flight_scenario()))
+        sim.reset(*_ic(_scenario()))
         assert sim._fdm["fcs/mixture-cmd-norm"] == 1.0
         assert sim._fdm["fcs/throttle-cmd-norm"] == pytest.approx(0.7)
     finally:
@@ -188,7 +238,7 @@ def test_c172p_still_gets_the_piston_controls_it_always_had():
 
 
 def test_the_737_holds_its_cruise_without_leaving_the_envelope():
-    scenario = make_steady_flight_scenario(aircraft="737", max_episode_steps=None)
+    scenario = _scenario(aircraft="737")
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     try:
         _, info = env.reset(seed=0)
@@ -197,7 +247,11 @@ def test_the_737_holds_its_cruise_without_leaving_the_envelope():
         for _ in range(100):  # 10 seconds at 10 Hz
             obs_arr, reward, terminated, truncated, info = env.step(action)
             assert env.observation_space.contains(obs_arr)
-            assert not terminated, f"left the flight envelope: {info['obs']}"
+            for feature in env.unwrapped.scenario.observation_features:
+                value = feature.fn(info["obs"], info["context"])
+                assert feature.spec.low <= value <= feature.spec.high, (
+                    f"{feature.name}={value} left its declared range"
+                )
         assert info["obs"][V.ALTITUDE] > 29000.0
     finally:
         env.close()
@@ -211,7 +265,7 @@ def test_the_throttle_action_reaches_every_engine():
     """
     sim = JSBSimSimulator()
     try:
-        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737")))
+        sim.reset(*_ic(_scenario(aircraft="737")))
         sim.set_control(V.THROTTLE, 0.3)
         sim.run()
         assert sim._fdm["fcs/throttle-cmd-norm[0]"] == pytest.approx(0.3)
@@ -223,7 +277,7 @@ def test_the_throttle_action_reaches_every_engine():
 def test_a_single_engine_aircraft_still_takes_its_throttle():
     sim = JSBSimSimulator()
     try:
-        sim.reset(*_ic(make_steady_flight_scenario()))
+        sim.reset(*_ic(_scenario()))
         sim.set_control(V.THROTTLE, 0.42)
         sim.run()
         assert sim._fdm["fcs/throttle-cmd-norm"] == pytest.approx(0.42)
@@ -235,8 +289,8 @@ def test_the_engine_count_follows_a_change_of_aircraft():
     """The same simulator can be reset onto a different model mid-life."""
     sim = JSBSimSimulator()
     try:
-        sim.reset(*_ic(make_steady_flight_scenario()))
-        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737")))
+        sim.reset(*_ic(_scenario()))
+        sim.reset(*_ic(_scenario(aircraft="737")))
         sim.set_control(V.THROTTLE, 0.25)
         sim.run()
         assert sim._fdm["fcs/throttle-cmd-norm[1]"] == pytest.approx(0.25)
@@ -246,7 +300,7 @@ def test_the_engine_count_follows_a_change_of_aircraft():
 
 def test_both_engines_answer_the_agent_over_a_flight():
     """The cockpit showed engine 2 frozen because the simulation had it frozen."""
-    scenario = make_steady_flight_scenario(aircraft="737", max_episode_steps=None)
+    scenario = _scenario(aircraft="737")
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     try:
         env.reset(seed=0)
@@ -268,7 +322,9 @@ def test_every_profile_publishes_its_control_positions():
 
     for model in PROFILES:
         sim = JSBSimSimulator()
-        scenario = make_steady_flight_scenario(aircraft=model, max_episode_steps=None)
+        scenario = _scenario(
+            aircraft=model, observation_variables=tuple(ACTION_POSITION.values())
+        )
         try:
             sim.reset(*_ic(scenario))
             for var in ACTION_POSITION.values():
@@ -317,7 +373,7 @@ def test_a_profile_override_replaces_both_the_property_and_its_sign(
     )
     sim = JSBSimSimulator()
     try:
-        sim.reset(*_ic(make_steady_flight_scenario(aircraft="737", max_episode_steps=None)))
+        sim.reset(*_ic(_scenario(aircraft="737")))
         sim.set_control(V.AILERON, 0.5)
         for _ in range(20):
             sim.run()
@@ -335,7 +391,7 @@ def test_an_unpublished_property_names_the_variable_the_property_and_the_model(
     from aero_gym.simulators.jsbsim import properties
 
     sim = JSBSimSimulator()
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     monkeypatch.setitem(
         properties.OBSERVATION_MAP,
         V.AOS,
@@ -359,7 +415,7 @@ def test_the_first_observation_of_an_episode_is_not_stale():
     from aero_gym.simulators.jsbsim.aircraft import profile_for
     from aero_gym.variables import FlightVariable as V
 
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     try:
         _, info = env.reset(seed=0)
@@ -378,7 +434,7 @@ def test_reset_runs_the_physics_settle_steps_times(monkeypatch):
     publishes can tell settle_steps=1 apart from settle_steps=12. Counting
     run() invocations is the only way to see the loop trip count directly.
     """
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     aircraft, initial_conditions, settle_steps = _ic(scenario)
     sim = JSBSimSimulator()
     calls = []
@@ -398,7 +454,7 @@ def test_initial_action_describes_the_aircrafts_startup_state():
     from aero_gym.simulators.jsbsim.aircraft import profile_for
     from aero_gym.simulators.jsbsim.properties import CONTROL_MAP
 
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     try:
         env.reset(seed=0)
@@ -459,7 +515,7 @@ def test_initial_action_seeds_the_elevator_command_not_its_position():
     DeltaAction's accumulator from the position feeds that trim back in as a
     command and JSBSim adds trim a second time.
     """
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     try:
         env.reset(seed=0)
@@ -482,7 +538,7 @@ def test_reset_clears_controls_when_the_fdm_is_reused():
     the rebuild is the only other thing that zeroes the commands: without one,
     this test would pass against a reset that clears nothing.
     """
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     sim = JSBSimSimulator()
     sim._viewer = _StubViewer(aircraft="c172p")
     try:
@@ -504,7 +560,7 @@ def test_reset_clears_controls_when_the_fdm_is_reused():
 
 
 @pytest.mark.filterwarnings(
-    "ignore:observation feature '(pitch_rate|vertical_speed|heading_error_deg|roll)' "
+    "ignore:observation feature '(pitch_rate|vertical_speed|roll)' "
     "(saturated at|is NaN):RuntimeWarning"
 )
 def test_two_episodes_from_the_same_seed_start_identically():
@@ -513,12 +569,13 @@ def test_two_episodes_from_the_same_seed_start_identically():
     episode and the episodes are not independent draws.
 
     Episode 1 deliberately flies well away from trim, which saturates
-    pitch_rate, vertical_speed, heading_error_deg and roll against
-    steady_flight's pinned bounds; the clip is expected here, not a defect.
-    The mark names exactly those four: a future change that saturates a
-    fifth feature here should still show up as a warning.
+    pitch_rate, vertical_speed and roll against this scenario's pinned
+    bounds; the clip is expected here, not a defect. This file has no
+    heading_error_deg feature, so the mark names only these three: a
+    future change that saturates a fourth feature here should still show
+    up as a warning.
     """
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())
     try:
         first, _ = env.reset(seed=0)
@@ -543,7 +600,7 @@ def test_reset_reuses_the_fdm_while_output_is_configured():
     (`launch_flightgear=False`), so that path keeps its FDM: determinism is
     a training concern and nothing is training while you are watching.
     """
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     sim = JSBSimSimulator()
     try:
         sim.enable_visualization(port=5599, launch_flightgear=False)
@@ -559,7 +616,7 @@ def test_reapplying_the_output_directive_does_not_orphan_the_previous_one():
     """_apply_output_directive writes a NamedTemporaryFile with delete=False and
     close() only unlinks the last one, so every rebuild used to strand a file.
     """
-    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    scenario = _scenario()
     sim = JSBSimSimulator()
     try:
         sim.enable_visualization(port=5599, launch_flightgear=False)

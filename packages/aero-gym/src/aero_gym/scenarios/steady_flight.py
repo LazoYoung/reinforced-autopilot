@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from aero_gym.scenario import InitialConditions, ObservationFeature, Scenario, Transition, raw
+from aero_gym.scenario import (
+    InitialConditions,
+    ObservationFeature,
+    Scenario,
+    Transition,
+    fixed_setup,
+    raw,
+)
 from aero_gym.simulators.jsbsim.aircraft import profile_for
 from aero_gym.variables import ALL_ACTION_VARIABLES, VariableSpec, FlightVariable as V
 
@@ -76,7 +83,7 @@ def make_steady_flight_scenario(
             "altitude_error_ft",
             VariableSpec("ft", -ALTITUDE_BAND_FT, ALTITUDE_BAND_FT, "altitude minus target"),
             # actual - target: positive means above target, negative means below.
-            lambda obs: obs[V.ALTITUDE] - target_altitude_ft,
+            lambda obs, ctx: obs[V.ALTITUDE] - ctx["target_altitude_ft"],
         ),
         ObservationFeature(
             "heading_error_deg",
@@ -85,7 +92,7 @@ def make_steady_flight_scenario(
             ),
             # target - current, wrapped short: positive means turn right to
             # close it, the opposite convention from altitude_error_ft above.
-            lambda obs: heading_error_deg(obs[V.HEADING], target_heading_deg),
+            lambda obs, ctx: heading_error_deg(obs[V.HEADING], ctx["target_heading_deg"]),
         ),
         raw(V.VERTICAL_SPEED, -VERTICAL_SPEED_BAND_FPM, VERTICAL_SPEED_BAND_FPM),
         raw(V.ROLL, -ROLL_LIMIT_DEG, ROLL_LIMIT_DEG),
@@ -108,8 +115,10 @@ def make_steady_flight_scenario(
         so the reward function cannot price a death penalty itself.
         """
         obs = t.obs
-        alt = abs(obs[V.ALTITUDE] - target_altitude_ft) / ALTITUDE_BAND_FT
-        hdg = abs(heading_error_deg(obs[V.HEADING], target_heading_deg)) / HEADING_BAND_DEG
+        alt = abs(obs[V.ALTITUDE] - t.context["target_altitude_ft"]) / ALTITUDE_BAND_FT
+        hdg = abs(
+            heading_error_deg(obs[V.HEADING], t.context["target_heading_deg"])
+        ) / HEADING_BAND_DEG
         vs = abs(obs[V.VERTICAL_SPEED]) / VERTICAL_SPEED_BAND_FPM
         # Not clamped below: a violent excursion scores slightly negative on its
         # final step, which never competes with the forfeited future reward.
@@ -129,19 +138,24 @@ def make_steady_flight_scenario(
 
     return Scenario(
         name="steady-flight",
-        initial_conditions=InitialConditions(
-            latitude_deg=latitude_deg,
-            longitude_deg=longitude_deg,
-            altitude_ft=altitude_ft,
-            heading_deg=heading_deg,
-            pitch_deg=0.0,
-            roll_deg=0.0,
-            airspeed_kts=airspeed_kts,
+        setup_fn=fixed_setup(
+            InitialConditions(
+                latitude_deg=latitude_deg,
+                longitude_deg=longitude_deg,
+                altitude_ft=altitude_ft,
+                heading_deg=heading_deg,
+                pitch_deg=0.0,
+                roll_deg=0.0,
+                airspeed_kts=airspeed_kts,
+            ),
+            target_altitude_ft=target_altitude_ft,
+            target_heading_deg=target_heading_deg,
         ),
         action_variables=ALL_ACTION_VARIABLES,
         observation_variables=OBSERVATION_VARIABLES,
         observation_features=features,
         reward_fn=reward_fn,
+        context_keys=("target_altitude_ft", "target_heading_deg"),
         aircraft=aircraft,
         agent_hz=agent_hz,
         max_episode_steps=max_episode_steps,

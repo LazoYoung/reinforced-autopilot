@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Mapping
+
+import numpy as np
 
 from .variables import (
     ACTION_SPECS,
@@ -33,12 +35,38 @@ class InitialConditions:
 
 
 @dataclass(frozen=True)
+class EpisodeSetup:
+    """One episode's starting situation and the targets that go with it.
+
+    The context is not required to derive from the initial conditions. A hold
+    task sets its target to the start; a "go to" task draws the two
+    independently, which is why this is a separate mapping rather than the
+    reset observation.
+    """
+
+    initial_conditions: InitialConditions
+    context: Mapping[str, float] = field(default_factory=dict)
+
+
+SetupFn = Callable[[np.random.Generator], EpisodeSetup]
+"""Draws one episode's setup from the environment's own seeded generator."""
+
+
+def fixed_setup(ic: InitialConditions, **context: float) -> SetupFn:
+    """A sampler that always returns the same setup. The constant case."""
+    setup = EpisodeSetup(ic, dict(context))
+    return lambda rng: setup
+
+
+@dataclass(frozen=True)
 class Transition:
     """One agent step, in canonical units, passed to the reward function."""
 
     prev_obs: dict[FlightVariable, float]
     obs: dict[FlightVariable, float]
     action: dict[FlightVariable, float]
+    context: Mapping[str, float] = field(default_factory=dict)
+    """The episode's targets, as sampled by the scenario's setup_fn."""
 
 
 RewardFn = Callable[[Transition], tuple[float, bool]]
@@ -54,12 +82,16 @@ class ObservationFeature:
     altitude is bounded [-1500, 85000] while a level-flight task lives within a
     few hundred feet of a target. A network fed the raw number sees an input
     that is huge in absolute terms and nearly constant in relative terms, and
-    fails silently. A feature is bounded by the limit that terminates on it.
+    fails silently.
+
+    A feature's bounds are declared by its author, not derived: for a hold task
+    they are usually the limit that terminates on it, but a "go to" task starts
+    far outside its tolerance band and needs a wider range than its terminator.
     """
 
     name: str
     spec: VariableSpec
-    fn: Callable[[dict[FlightVariable, float]], float]
+    fn: Callable[[dict[FlightVariable, float], Mapping[str, float]], float]
 
 
 def raw(
@@ -77,7 +109,7 @@ def raw(
             base.high if high is None else high,
             base.description,
         ),
-        lambda obs: obs[var],
+        lambda obs, context: obs[var],
     )
 
 
@@ -86,11 +118,12 @@ class Scenario:
     """A fully-specified task for :class:`aero_gym.env.AeroGymEnv`."""
 
     name: str
-    initial_conditions: InitialConditions
+    setup_fn: SetupFn
     reward_fn: RewardFn
     action_variables: tuple[FlightVariable, ...] = ALL_ACTION_VARIABLES
     observation_variables: tuple[FlightVariable, ...] = ALL_OBSERVATION_VARIABLES
     observation_features: tuple[ObservationFeature, ...] = ()
+    context_keys: tuple[str, ...] = ()
     aircraft: str = "c172p"
     agent_hz: float = 10.0
     max_episode_steps: int | None = 2000

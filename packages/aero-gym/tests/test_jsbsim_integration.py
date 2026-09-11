@@ -17,7 +17,8 @@ from aero_gym.variables import OBSERVATION_SPECS, FlightVariable as V
 
 def _ic(scenario):
     """The three values the narrowed Simulator.reset takes, from a scenario."""
-    return scenario.aircraft, scenario.initial_conditions, 12
+    setup = scenario.setup_fn(np.random.default_rng(0))
+    return scenario.aircraft, setup.initial_conditions, 12
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +53,7 @@ def test_trimmed_flight_stays_in_the_envelope(env):
         _, reward, terminated, truncated, info = env.step(action)
         assert np.isfinite(reward)
         for feature in env.scenario.observation_features:
-            value = feature.fn(info["obs"])
+            value = feature.fn(info["obs"], info["context"])
             assert feature.spec.low <= value <= feature.spec.high, (
                 f"{feature.name}={value} outside [{feature.spec.low}, {feature.spec.high}]"
             )

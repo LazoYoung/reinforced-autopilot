@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aero_gym.scenario import Scenario
+from aero_gym.scenario import Scenario, fixed_setup
 from aero_gym.variables import (
     ACTION_SPECS,
     ALL_ACTION_VARIABLES,
@@ -41,7 +41,7 @@ def test_scenario_validation(initial_conditions, kwargs):
     with pytest.raises(ValueError):
         Scenario(
             name="bad",
-            initial_conditions=initial_conditions,
+            setup_fn=fixed_setup(initial_conditions),
             reward_fn=constant_reward,
             **kwargs,
         )
@@ -53,13 +53,13 @@ def test_features_default_to_a_passthrough_over_the_observed_variables(initial_c
 
     scenario = Scenario(
         name="passthrough",
-        initial_conditions=initial_conditions,
+        setup_fn=fixed_setup(initial_conditions),
         reward_fn=lambda t: (0.0, False),
         observation_variables=(V.ROLL, V.ALTITUDE),
     )
     assert [f.name for f in scenario.observation_features] == ["roll", "altitude"]
     assert scenario.observation_features[1].spec == OBSERVATION_SPECS[V.ALTITUDE]
-    assert scenario.observation_features[0].fn({V.ROLL: 12.0}) == 12.0
+    assert scenario.observation_features[0].fn({V.ROLL: 12.0}, {}) == 12.0
 
 
 def test_raw_narrows_bounds_without_touching_the_unit(initial_conditions):
@@ -78,8 +78,22 @@ def test_duplicate_feature_names_are_rejected(initial_conditions):
     with pytest.raises(ValueError, match="duplicate observation feature"):
         Scenario(
             name="dup",
-            initial_conditions=initial_conditions,
+            setup_fn=fixed_setup(initial_conditions),
             reward_fn=lambda t: (0.0, False),
             observation_variables=(V.ROLL,),
             observation_features=(raw(V.ROLL), raw(V.ROLL)),
         )
+
+
+def test_fixed_setup_returns_the_same_setup_for_any_generator():
+    import numpy as np
+
+    from aero_gym.scenario import InitialConditions, fixed_setup
+
+    ic = InitialConditions(0.0, 0.0, 5000.0, 270.0)
+    setup_fn = fixed_setup(ic, target_altitude_ft=5000.0)
+    first = setup_fn(np.random.default_rng(0))
+    second = setup_fn(np.random.default_rng(99))
+    assert first == second
+    assert first.initial_conditions is ic
+    assert first.context == {"target_altitude_ft": 5000.0}

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pytest
 
 from aero_gym import registry
-from aero_gym.scenario import InitialConditions, Scenario
+from aero_gym.scenario import InitialConditions, Scenario, fixed_setup
 from conftest import constant_reward
 
 IC = InitialConditions(
@@ -54,7 +54,7 @@ GOOD = """
     from dataclasses import dataclass
 
     from aero_gym.registry import scenario
-    from aero_gym.scenario import InitialConditions, Scenario
+    from aero_gym.scenario import InitialConditions, Scenario, fixed_setup
 
 
     @dataclass(frozen=True)
@@ -66,7 +66,7 @@ GOOD = """
     def build(params):
         return Scenario(
             name="good",
-            initial_conditions=InitialConditions(0.0, 0.0, params.altitude_ft, 0.0),
+            setup_fn=fixed_setup(InitialConditions(0.0, 0.0, params.altitude_ft, 0.0)),
             reward_fn=lambda t: (0.0, False),
         )
 """
@@ -77,7 +77,7 @@ BROKEN = "this is not valid python ((\n"
 def test_a_registered_scenario_can_be_looked_up(clean):
     @clean.scenario("hold")
     def build():
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     found = clean.lookup("hold")
     assert found.name == "hold"
@@ -90,19 +90,19 @@ def test_a_duplicate_name_raises_and_names_both_registrations(clean):
 
     @clean.scenario("hold")
     def first():
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     with pytest.raises(ValueError, match=r"first.*second|second.*first"):
 
         @clean.scenario("hold")
         def second():
-            return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+            return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
 
 def test_an_unknown_name_lists_what_did_register(clean):
     @clean.scenario("hold")
     def build():
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     with pytest.raises(ValueError, match=r"unknown scenario 'climb'.*'hold'"):
         clean.lookup("climb")
@@ -179,7 +179,7 @@ def test_discovery_runs_once_per_process(clean, tmp_path, monkeypatch):
 def test_params_are_built_from_a_mapping(clean):
     @clean.scenario("hold", params=_Params)
     def build(params):
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     built = clean.build_params(clean.lookup("hold"), {"aircraft": "737"})
     assert built == _Params(altitude_ft=5000.0, aircraft="737")
@@ -191,7 +191,7 @@ def test_an_unknown_param_names_the_field_and_lists_the_valid_ones(clean):
 
     @clean.scenario("hold", params=_Params)
     def build(params):
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     with pytest.raises(ValueError, match=r"aircrafft.*altitude_ft.*aircraft"):
         clean.build_params(clean.lookup("hold"), {"aircrafft": "737"})
@@ -200,7 +200,7 @@ def test_an_unknown_param_names_the_field_and_lists_the_valid_ones(clean):
 def test_a_scenario_with_no_params_rejects_params(clean):
     @clean.scenario("hold")
     def build():
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     with pytest.raises(ValueError, match="takes no parameters"):
         clean.build_params(clean.lookup("hold"), {"aircraft": "737"})
@@ -212,7 +212,7 @@ def test_build_scenario_passes_the_params_object_to_the_builder(clean):
     @clean.scenario("hold", params=_Params)
     def build(params):
         seen.append(params)
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     assert clean.build_scenario("hold", {"aircraft": "737"}).name == "hold"
     assert seen == [_Params(aircraft="737")]
@@ -221,6 +221,6 @@ def test_build_scenario_passes_the_params_object_to_the_builder(clean):
 def test_build_scenario_calls_a_no_params_builder_with_no_argument(clean):
     @clean.scenario("hold")
     def build():
-        return Scenario(name="hold", initial_conditions=IC, reward_fn=constant_reward)
+        return Scenario(name="hold", setup_fn=fixed_setup(IC), reward_fn=constant_reward)
 
     assert clean.build_scenario("hold").name == "hold"

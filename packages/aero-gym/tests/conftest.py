@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aero_gym.scenario import InitialConditions, Scenario, Transition
+from aero_gym.scenario import InitialConditions, Scenario, Transition, fixed_setup
 from aero_gym.simulator import Simulator
 from aero_gym.variables import FlightVariable as V
 
@@ -73,7 +73,7 @@ def initial_conditions() -> InitialConditions:
 def scenario(initial_conditions: InitialConditions) -> Scenario:
     return Scenario(
         name="test",
-        initial_conditions=initial_conditions,
+        setup_fn=fixed_setup(initial_conditions),
         reward_fn=constant_reward,
         agent_hz=10.0,
         max_episode_steps=5,

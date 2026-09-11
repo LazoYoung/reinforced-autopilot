@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from aero_gym.scenario import Transition
@@ -15,35 +16,42 @@ from aero_gym.variables import FlightVariable as V
 
 def test_the_flight_condition_follows_the_aircraft():
     """5000 ft at 95 kts is a Cessna cruise; a 737 would stall there."""
-    ic = make_steady_flight_scenario(aircraft="737").initial_conditions
+    ic = _setup(make_steady_flight_scenario(aircraft="737")).initial_conditions
     assert ic.altitude_ft == 30000.0
     assert ic.airspeed_kts == 280.0
 
 
 def test_c172p_keeps_the_flight_condition_it_always_had():
-    ic = make_steady_flight_scenario().initial_conditions
+    ic = _setup(make_steady_flight_scenario()).initial_conditions
     assert ic.altitude_ft == 5000.0
     assert ic.airspeed_kts == 95.0
 
 
 def test_an_explicit_flight_condition_wins_over_the_aircrafts():
-    ic = make_steady_flight_scenario(
-        aircraft="737", altitude_ft=12000.0, airspeed_kts=250.0
+    ic = _setup(
+        make_steady_flight_scenario(aircraft="737", altitude_ft=12000.0, airspeed_kts=250.0)
     ).initial_conditions
     assert ic.altitude_ft == 12000.0
     assert ic.airspeed_kts == 250.0
 
 
 def test_one_overridden_value_does_not_drag_the_other_along():
-    ic = make_steady_flight_scenario(aircraft="737", altitude_ft=12000.0).initial_conditions
+    ic = _setup(
+        make_steady_flight_scenario(aircraft="737", altitude_ft=12000.0)
+    ).initial_conditions
     assert ic.altitude_ft == 12000.0
     assert ic.airspeed_kts == 280.0
 
 
+def _setup(scenario):
+    return scenario.setup_fn(np.random.default_rng(0))
+
+
 def _obs(scenario, overrides=None):
+    setup = _setup(scenario)
     obs = {v: 0.0 for v in scenario.observation_variables}
-    obs[V.ALTITUDE] = scenario.initial_conditions.altitude_ft
-    obs[V.HEADING] = scenario.initial_conditions.heading_deg
+    obs[V.ALTITUDE] = setup.initial_conditions.altitude_ft
+    obs[V.HEADING] = setup.initial_conditions.heading_deg
     obs.update(overrides or {})
     return obs
 
@@ -52,7 +60,9 @@ def _evaluate(scenario, overrides=None):
     # A plain dict, not **kwargs: the keys are FlightVariable members, and
     # CPython's call-unpacking requires str keys whatever the callee accepts.
     obs = _obs(scenario, overrides)
-    return scenario.reward_fn(Transition(prev_obs=obs, obs=obs, action={}))
+    return scenario.reward_fn(
+        Transition(prev_obs=obs, obs=obs, action={}, context=_setup(scenario).context)
+    )
 
 
 def test_on_target_scores_one_and_does_not_terminate():
@@ -67,8 +77,8 @@ def test_the_corner_of_the_band_scores_zero_and_does_not_terminate():
     reward, terminated = _evaluate(
         scenario,
         {
-            V.ALTITUDE: scenario.initial_conditions.altitude_ft + ALTITUDE_BAND_FT,
-            V.HEADING: (scenario.initial_conditions.heading_deg + HEADING_BAND_DEG) % 360.0,
+            V.ALTITUDE: _setup(scenario).initial_conditions.altitude_ft + ALTITUDE_BAND_FT,
+            V.HEADING: (_setup(scenario).initial_conditions.heading_deg + HEADING_BAND_DEG) % 360.0,
             V.VERTICAL_SPEED: VERTICAL_SPEED_BAND_FPM,
         },
     )
@@ -124,8 +134,8 @@ def test_in_band_reward_is_never_negative():
                 reward, terminated = _evaluate(
                     scenario,
                     {
-                        V.ALTITUDE: scenario.initial_conditions.altitude_ft + alt,
-                        V.HEADING: (scenario.initial_conditions.heading_deg + hdg) % 360.0,
+                        V.ALTITUDE: _setup(scenario).initial_conditions.altitude_ft + alt,
+                        V.HEADING: (_setup(scenario).initial_conditions.heading_deg + hdg) % 360.0,
                         V.VERTICAL_SPEED: vs,
                     },
                 )
@@ -174,13 +184,17 @@ def test_altitude_error_feature_computes_actual_minus_target():
     absolute altitude instead of the error would pass every other test here."""
     scenario = make_steady_flight_scenario()  # c172p cruise target: 5000.0 ft
     altitude_error_ft = _feature(scenario, "altitude_error_ft")
-    assert altitude_error_ft.fn({V.ALTITUDE: 5300.0}) == pytest.approx(300.0)
+    assert altitude_error_ft.fn(
+        {V.ALTITUDE: 5300.0}, _setup(scenario).context
+    ) == pytest.approx(300.0)
 
 
 def test_heading_error_feature_computes_signed_shortest_path_error():
     scenario = make_steady_flight_scenario()  # default target heading: 270.0 deg
     heading_error_deg_feature = _feature(scenario, "heading_error_deg")
-    assert heading_error_deg_feature.fn({V.HEADING: 275.0}) == pytest.approx(-5.0)
+    assert heading_error_deg_feature.fn(
+        {V.HEADING: 275.0}, _setup(scenario).context
+    ) == pytest.approx(-5.0)
 
 
 def test_heading_error_wraps_the_short_way_across_zero():

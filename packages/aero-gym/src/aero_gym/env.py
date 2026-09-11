@@ -45,6 +45,7 @@ class AeroGymEnv(gym.Env):
         self._prev_obs: dict[FlightVariable, float] | None = None
         self._visualization_started = False
         self._next_frame_deadline: float | None = None
+        self._context: dict[str, float] = {}
 
         act_low = np.array([ACTION_SPECS[v].low for v in scenario.action_variables], np.float32)
         act_high = np.array([ACTION_SPECS[v].high for v in scenario.action_variables], np.float32)
@@ -60,16 +61,23 @@ class AeroGymEnv(gym.Env):
         if self.render_mode == "flightgear" and not self._visualization_started:
             self.simulator.enable_visualization()
             self._visualization_started = True
+        setup = self.scenario.setup_fn(self.np_random)
+        missing = [k for k in self.scenario.context_keys if k not in setup.context]
+        if missing:
+            raise KeyError(
+                f"scenario {self.scenario.name!r} declares context_keys "
+                f"{list(self.scenario.context_keys)}, but its setup_fn returned "
+                f"{sorted(setup.context)}; missing {missing}"
+            )
+        self._context = dict(setup.context)
         self.simulator.reset(
-            self.scenario.aircraft,
-            self.scenario.initial_conditions,
-            self._steps_per_action,
+            self.scenario.aircraft, setup.initial_conditions, self._steps_per_action
         )
         self._elapsed_steps = 0
         self._next_frame_deadline = None
         obs_dict = self._observe()
         self._prev_obs = obs_dict
-        return self._to_array(obs_dict), {"obs": obs_dict}
+        return self._to_array(obs_dict), {"obs": obs_dict, "context": self._context}
 
     def step(
         self, action: np.ndarray
@@ -87,7 +95,12 @@ class AeroGymEnv(gym.Env):
             self._pace_real_time()
 
         obs_dict = self._observe()
-        transition = Transition(prev_obs=self._prev_obs, obs=obs_dict, action=action_dict)
+        transition = Transition(
+            prev_obs=self._prev_obs,
+            obs=obs_dict,
+            action=action_dict,
+            context=self._context,
+        )
         reward, terminated = self.scenario.reward_fn(transition)
         self._prev_obs = obs_dict
         self._elapsed_steps += 1
@@ -95,7 +108,13 @@ class AeroGymEnv(gym.Env):
             self.scenario.max_episode_steps is not None
             and self._elapsed_steps >= self.scenario.max_episode_steps
         )
-        return self._to_array(obs_dict), float(reward), bool(terminated), truncated, {"obs": obs_dict}
+        return (
+            self._to_array(obs_dict),
+            float(reward),
+            bool(terminated),
+            truncated,
+            {"obs": obs_dict, "context": self._context},
+        )
 
     def initial_action(self) -> np.ndarray:
         """The action equivalent to the aircraft's control state after reset.
@@ -132,7 +151,8 @@ class AeroGymEnv(gym.Env):
 
     def _to_array(self, obs: dict[FlightVariable, float]) -> np.ndarray:
         arr = np.array(
-            [f.fn(obs) for f in self.scenario.observation_features], np.float32
+            [f.fn(obs, self._context) for f in self.scenario.observation_features],
+            np.float32,
         )
         return np.clip(arr, self.observation_space.low, self.observation_space.high)
 

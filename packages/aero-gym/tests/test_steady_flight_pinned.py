@@ -12,6 +12,7 @@ constants below must not be touched.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from aero_gym.scenario import Transition
@@ -75,21 +76,20 @@ def _scenario():
 
 
 def _context(scenario):
-    """The episode context the features are evaluated against.
-
-    Empty today: the targets are still captured at construction time. Task 5
-    replaces this with the sampled context, and nothing else in this file moves.
-    """
-    return {}
+    """The episode context the features are evaluated against."""
+    return scenario.setup_fn(np.random.default_rng(0)).context
 
 
 def _feature_values(scenario, obs):
     """The one place a feature-signature change is allowed to land."""
-    return [float(f.fn(obs)) for f in scenario.observation_features]
+    context = _context(scenario)
+    return [float(f.fn(obs, context)) for f in scenario.observation_features]
 
 
 def _reward(scenario, obs):
-    return scenario.reward_fn(Transition(prev_obs=obs, obs=obs, action={}))
+    return scenario.reward_fn(
+        Transition(prev_obs=obs, obs=obs, action={}, context=_context(scenario))
+    )
 
 
 def test_the_feature_names_and_their_order_are_unchanged():
@@ -132,7 +132,7 @@ def test_the_action_and_observation_variables_are_unchanged():
 
 def test_the_default_flight_condition_is_unchanged():
     scenario = _scenario()
-    ic = scenario.initial_conditions
+    ic = scenario.setup_fn(np.random.default_rng(0)).initial_conditions
     assert (ic.latitude_deg, ic.longitude_deg) == (37.6191, -122.3816)
     assert (ic.altitude_ft, ic.heading_deg, ic.airspeed_kts) == (5000.0, 270.0, 95.0)
     assert (ic.pitch_deg, ic.roll_deg) == (0.0, 0.0)

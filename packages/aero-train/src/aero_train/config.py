@@ -192,6 +192,17 @@ class TrackingConfig:
     experiment: str = "reinforced-autopilot"
     tracking_uri: str | None = None      # None -> local ./mlruns file store
 
+    console: bool = True
+    """Print progress to stdout. Independent of `enabled`, which governs MLflow."""
+
+    console_interval_s: float = 5.0
+    """Seconds between console iteration lines; 0.0 prints every one. Evals and
+    the final iteration print regardless."""
+
+    def __post_init__(self) -> None:
+        if self.console_interval_s < 0:
+            raise ValueError("tracking.console_interval_s must be >= 0")
+
 
 @dataclass(frozen=True, slots=True)
 class CheckpointConfig:

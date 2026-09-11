@@ -7,8 +7,11 @@ MLflow tests point at a tmp_path file store.
 
 from __future__ import annotations
 
+import sys
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Callable, IO, Sequence
 
 from .config import TrainConfig, flatten_config
 
@@ -50,6 +53,137 @@ class NullTracker(Tracker):
 
     def close(self) -> None:
         pass
+
+
+class ConsoleTracker(Tracker):
+    """Progress on stdout: without it a 300k-frame run is 35 silent minutes.
+
+    Throttled by wall clock rather than an iteration stride, since an iteration
+    is ~30 ms of CartPole and ~2 s of JSBSim. The first iteration, every eval,
+    and the final iteration (flushed by close) bypass the throttle.
+    """
+
+    def __init__(
+        self,
+        cfg: TrainConfig,
+        stream: IO[str] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._stream = stream if stream is not None else sys.stdout
+        self._clock = clock
+        self._interval = cfg.tracking.console_interval_s
+        self._total_steps = cfg.total_steps
+        self._started = clock()
+        self._last_print: float | None = None
+        self._withheld: dict[str, float] | None = None
+        self._frames = 0
+
+    def log_params(self, cfg: TrainConfig) -> None:
+        env = cfg.env.scenario or cfg.env.id
+        self._write(
+            f"{cfg.run_name} | {cfg.algo.type} on {env} | {cfg.total_steps} frames "
+            f"| {cfg.device} | {cfg.rollout.engine} x{cfg.rollout.envs_per_worker} envs, "
+            f"{cfg.rollout.frames_per_iter} frames/iter"
+        )
+
+    def log_metrics(self, metrics: dict[str, float], step: int) -> None:
+        if not metrics:
+            return
+        if any(k.startswith("eval/") for k in metrics):
+            self._write(self._eval_line(metrics))
+            return
+        self._frames = int(metrics.get("progress/frames", self._frames))
+        now = self._clock()
+        if self._last_print is not None and now - self._last_print < self._interval:
+            self._withheld = metrics
+            return
+        self._last_print = now
+        self._withheld = None
+        self._write(self._iteration_line(metrics))
+
+    def log_artifact(self, path: Path) -> None:
+        self._write(f"  saved {path}")
+
+    def close(self) -> None:
+        if self._withheld is not None:
+            self._write(self._iteration_line(self._withheld))
+            self._withheld = None
+        self._write(f"done | {self._frames} frames | {_duration(self._clock() - self._started)}")
+
+    def _iteration_line(self, m: dict[str, float]) -> str:
+        frames = int(m.get("progress/frames", 0))
+        parts = [f"iter {int(m.get('progress/iteration', 0)):>5}"]
+        if self._total_steps:
+            parts.append(f"frames {frames:>8}/{self._total_steps} ({frames / self._total_steps:>4.0%})")
+        else:
+            parts.append(f"frames {frames:>8}")
+        # No episode finished this iteration: the mean keys are absent, not zero.
+        if m.get("episode/count", 0.0):
+            parts.append(f"ret {m['episode/return_mean']:>7.1f}")
+            parts.append(f"len {m['episode/length_mean']:>5.0f}")
+            parts.append(f"term {m['episode/terminated_frac']:>4.0%}")
+        # Likewise absent for the baselines, which never call update().
+        for key, label, places in (("loss", "loss", 4), ("epsilon", "eps", 2)):
+            if key in m:
+                parts.append(f"{label} {m[key]:.{places}f}")
+        if "throughput/fps" in m:
+            parts.append(f"{m['throughput/fps']:>6.0f} fps")
+        return " | ".join(parts)
+
+    def _eval_line(self, m: dict[str, float]) -> str:
+        parts = [f"  eval @ {self._frames}"]
+        for key, label, places in (
+            ("eval/return_mean", "return", 2),
+            ("eval/length_mean", "length", 1),
+            ("eval/return_per_step", "return/step", 3),
+        ):
+            if key in m:
+                parts.append(f"{label} {m[key]:.{places}f}")
+        if "eval/terminated_frac" in m:
+            parts.append(f"terminated {m['eval/terminated_frac']:.0%}")
+        return " | ".join(parts)
+
+    def _write(self, line: str) -> None:
+        print(line, file=self._stream, flush=True)
+
+
+def _duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}m {secs:02d}s"
+
+
+class CompositeTracker(Tracker):
+    """Fan every call out to several trackers, so console and MLflow coexist
+    without Trainer knowing how many backends there are."""
+
+    def __init__(self, trackers: Sequence[Tracker]) -> None:
+        self.trackers = list(trackers)
+
+    def log_params(self, cfg: TrainConfig) -> None:
+        for t in self.trackers:
+            t.log_params(cfg)
+
+    def log_metrics(self, metrics: dict[str, float], step: int) -> None:
+        for t in self.trackers:
+            t.log_metrics(metrics, step)
+
+    def log_artifact(self, path: Path) -> None:
+        for t in self.trackers:
+            t.log_artifact(path)
+
+    def close(self) -> None:
+        # Every tracker closes before the first failure is re-raised: one dead
+        # backend must not leave MLflow's run open.
+        errors: list[BaseException] = []
+        for t in self.trackers:
+            try:
+                t.close()
+            except BaseException as exc:      # noqa: BLE001 - re-raised below
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
 
 class MLflowTracker(Tracker):
@@ -137,4 +271,13 @@ def library_versions() -> dict[str, str]:
 
 
 def build_tracker(cfg: TrainConfig) -> Tracker:
-    return MLflowTracker(cfg) if cfg.tracking.enabled else NullTracker()
+    """`enabled` governs MLflow, `console` governs stdout -- independently,
+    because a run with MLflow off is the one whose only output is the terminal."""
+    trackers: list[Tracker] = []
+    if cfg.tracking.console:
+        trackers.append(ConsoleTracker(cfg))
+    if cfg.tracking.enabled:
+        trackers.append(MLflowTracker(cfg))
+    if not trackers:
+        return NullTracker()
+    return trackers[0] if len(trackers) == 1 else CompositeTracker(trackers)

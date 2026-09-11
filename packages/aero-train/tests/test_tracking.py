@@ -40,8 +40,13 @@ def test_null_tracker_satisfies_the_abc_and_does_nothing(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_build_tracker_returns_the_null_tracker_when_disabled():
-    assert isinstance(build_tracker(make_cfg(enabled=False)), NullTracker)
+def test_build_tracker_builds_no_mlflow_when_disabled():
+    """`enabled` governs MLflow only. Console output is a separate switch, so
+    what disabling tracking must guarantee is that no run is created -- not
+    that the terminal goes quiet."""
+    tracker = build_tracker(make_cfg(enabled=False))
+    assert not isinstance(tracker, MLflowTracker)
+    assert isinstance(build_tracker(make_cfg(enabled=False, console=False)), NullTracker)
 
 
 def test_mlflow_tracker_defaults_to_a_local_mlruns_file_store(tmp_path, monkeypatch):

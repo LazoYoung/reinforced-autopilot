@@ -146,7 +146,7 @@ def test_experience_source_spawns_one_independent_stream_per_sub_env():
 
 @pytest.mark.filterwarnings(
     "ignore:observation feature '(vertical_speed|heading_error_deg|roll)' "
-    "(saturated at|is NaN):RuntimeWarning"
+    "(saturated at):RuntimeWarning"
 )
 def test_a_jittered_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
     """Under this config, no field this checkpoint carries distinguishes a
@@ -192,7 +192,7 @@ def test_a_jittered_run_survives_start_checkpoint_resume_and_eval(tmp_path, caps
 
 @pytest.mark.filterwarnings(
     "ignore:observation feature '(vertical_speed|heading_error_deg|roll)' "
-    "(saturated at|is NaN):RuntimeWarning"
+    "(saturated at):RuntimeWarning"
 )
 def test_two_runs_of_the_same_jittered_config_are_bit_identical(tmp_path, capsys):
     """The sampler draws from the env's own generator and adds no other source
@@ -220,7 +220,7 @@ def test_two_runs_of_the_same_jittered_config_are_bit_identical(tmp_path, capsys
 
 @pytest.mark.filterwarnings(
     "ignore:observation feature '(vertical_speed|heading_error_deg|roll)' "
-    "(saturated at|is NaN):RuntimeWarning"
+    "(saturated at):RuntimeWarning"
 )
 def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path, capsys):
     path = _config(tmp_path, interval_iters=2, eval_interval_iters=2, eval_episodes=1)

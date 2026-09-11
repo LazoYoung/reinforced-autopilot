@@ -113,7 +113,7 @@ def test_trimmed_flight_stays_in_the_envelope(env):
 
 
 @pytest.mark.filterwarnings(
-    "ignore:observation feature '(pitch_rate)' (saturated at|is NaN):RuntimeWarning"
+    "ignore:observation feature '(pitch_rate)' (saturated at):RuntimeWarning"
 )
 def test_controls_have_canonical_sign(env):
     """Pitch-up elevator command must raise pitch rate, and aileron-right must
@@ -559,7 +559,7 @@ def test_reset_clears_controls_when_the_fdm_is_reused():
 
 @pytest.mark.filterwarnings(
     "ignore:observation feature '(pitch_rate|vertical_speed|roll)' "
-    "(saturated at|is NaN):RuntimeWarning"
+    "(saturated at):RuntimeWarning"
 )
 def test_two_episodes_from_the_same_seed_start_identically():
     """JSBSim's run_ic() restores the flight condition but not engine state, so

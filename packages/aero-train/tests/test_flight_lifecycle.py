@@ -45,7 +45,7 @@ def _assert_eval_report_printed(out: str) -> None:
 
 @pytest.mark.filterwarnings(
     "ignore:observation feature '(vertical_speed|heading_error_deg)' "
-    "(saturated at|is NaN):RuntimeWarning"
+    "(saturated at):RuntimeWarning"
 )
 def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
     """Under this config, no field the checkpoint carries distinguishes a
@@ -93,7 +93,7 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
 
 @pytest.mark.filterwarnings(
     "ignore:observation feature '(vertical_speed|heading_error_deg)' "
-    "(saturated at|is NaN):RuntimeWarning"
+    "(saturated at):RuntimeWarning"
 )
 def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path, capsys):
     """DQN's exploratory early actions fly steady_flight well outside its

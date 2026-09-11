@@ -229,7 +229,7 @@ Four things carry the design:
 - **The params dataclass is the list of what is tweakable.** A name that is not a field on it is
   rejected before any environment is built, and the error names the field and lists the valid ones.
 
-An installed package can ship scenarios too, by declaring the same entry point its own
+An installed package can ship scenarios too, by declaring the same entry point in its own
 `pyproject.toml`:
 
 ```toml
@@ -239,9 +239,9 @@ my-tasks = "my_package.scenarios"
 
 AeroGymEnv talks only to the `Simulator` interface and holds no task knowledge of its own,
 which is what lets a second flight simulator be added without touching the RL side;
-`Scenario` carries everything task specific; and the sandbox at `src/sandbox/` holds the
-task definitions, the configs and the examples, with nothing in `aero_gym` or `aero_train`
-importing it.
+`Scenario` carries everything task specific; and this repo is that sandbox, with its
+scenarios in `src/sandbox/`, its configs in `configs/`, and its examples in `examples/`,
+none of it imported by `aero_gym` or `aero_train`.
 
 Units are canonical across all simulator backends. Every backend converts into them and
 into the pilot sign convention, so scenarios and trained agents stay portable.

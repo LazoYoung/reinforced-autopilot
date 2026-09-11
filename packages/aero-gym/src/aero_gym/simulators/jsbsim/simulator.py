@@ -70,7 +70,7 @@ class JSBSimSimulator(Simulator):
         until ``run()`` is called.
 
         Does not pre-read the observed variables. AeroGymEnv.reset calls
-        _observe() on the next line, which reads every one of them and raises
+        _observe() immediately after, which reads every one of them and raises
         the same SimulatorError from observe(), so the failure still surfaces
         inside reset() rather than mid-rollout.
         """

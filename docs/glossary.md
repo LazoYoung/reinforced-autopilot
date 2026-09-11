@@ -60,10 +60,11 @@ builder. A scenario registers itself with `@scenario("name", params=...)`; there
 is no map to edit and no import to add. `build_scenario` looks up, validates,
 and binds params in one call.
 
-**Sandbox** — the top-level `src/sandbox/` package where this project's own
-scenarios, configs and examples live. It is discovered by the registry through
-the `aero_gym.scenarios` entry point and imported by nothing in `aero_gym` or
-`aero_train`.
+**Sandbox** — this repo: a training project built on `aero_gym` and `aero_train`,
+with its scenarios in the top-level `src/sandbox/` package, its configs in
+`configs/`, and its examples in `examples/`. The scenarios are discovered by
+the registry through the `aero_gym.scenarios` entry point; none of it is
+imported by `aero_gym` or `aero_train`.
 
 **Simulator** — the flight-model backend ABC (`dt`, `reset`, `set_control`, `run`,
 `observe`, `close`). JSBSim is currently the only implementation. Deliberately

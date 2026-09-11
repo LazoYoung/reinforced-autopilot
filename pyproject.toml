@@ -9,12 +9,24 @@ dependencies = [
     "aero-train",
 ]
 
+[project.entry-points."aero_gym.scenarios"]
+sandbox = "sandbox.scenarios"
+
 [tool.uv.workspace]
 members = ["packages/*"]
 
 [tool.uv.sources]
 aero-gym = { workspace = true }
 aero-train = { workspace = true }
+
+[tool.uv.build-backend]
+# The project is `reinforced-autopilot` but the module it ships is `sandbox`,
+# which uv_build supports and which keeps the import name saying what it is.
+module-name = "sandbox"
+
+[build-system]
+requires = ["uv_build>=0.12.8,<0.13.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
@@ -23,7 +35,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/aero-gym/tests", "packages/aero-train/tests"]
+testpaths = ["tests", "packages/aero-gym/tests", "packages/aero-train/tests"]
 markers = [
     "slow: end-to-end learning tests; deselected by default",
 ]

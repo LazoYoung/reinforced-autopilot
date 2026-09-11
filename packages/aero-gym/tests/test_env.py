@@ -286,6 +286,17 @@ def test_a_saturated_observation_warns_and_names_the_feature(fake_simulator):
     assert obs[0] == pytest.approx(100.0)
 
 
+def test_a_saturated_observation_below_the_low_bound_also_warns(fake_simulator):
+    """The compare in _to_array is direction-symmetric; this mirrors the
+    over-high case above so the low side of the clip is covered too."""
+    env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
+    env.reset(seed=0)
+    fake_simulator.state[V.ROLL] = -250.0
+    with pytest.warns(RuntimeWarning, match=r"'roll'.*-250"):
+        obs, *_ = env.step(np.zeros(env.action_space.shape, np.float32))
+    assert obs[0] == pytest.approx(-100.0)
+
+
 def test_the_saturation_warning_fires_once_per_feature_not_once_per_step(fake_simulator):
     """At 10 Hz an excursion would otherwise emit a warning every 100 ms for
     the rest of the run, which is how a useful warning becomes noise.

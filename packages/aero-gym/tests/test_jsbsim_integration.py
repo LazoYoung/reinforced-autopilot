@@ -63,12 +63,14 @@ def test_trimmed_flight_stays_in_the_envelope(env):
 
 
 @pytest.mark.filterwarnings(
-    "ignore:observation feature '.*' (saturated at|is NaN):RuntimeWarning"
+    "ignore:observation feature '(pitch_rate)' (saturated at|is NaN):RuntimeWarning"
 )
 def test_controls_have_canonical_sign(env):
     """Pitch-up elevator command must raise pitch rate, and aileron-right must
     roll right; driving both hard on purpose saturates pitch_rate against
-    steady_flight's pinned bound, which is the clip doing its job."""
+    steady_flight's pinned bound, which is the clip doing its job. The mark
+    names only pitch_rate: a future change that saturates a different
+    feature here should still show up as a warning."""
     env.reset(seed=0)
     up = np.array([0.5, 0.0, 0.0, 0.7], np.float32)
     for _ in range(5):
@@ -502,15 +504,19 @@ def test_reset_clears_controls_when_the_fdm_is_reused():
 
 
 @pytest.mark.filterwarnings(
-    "ignore:observation feature '.*' (saturated at|is NaN):RuntimeWarning"
+    "ignore:observation feature '(pitch_rate|vertical_speed|heading_error_deg|roll)' "
+    "(saturated at|is NaN):RuntimeWarning"
 )
 def test_two_episodes_from_the_same_seed_start_identically():
     """JSBSim's run_ic() restores the flight condition but not engine state, so
     without discarding the FDM a seeded run is not reproducible past its first
     episode and the episodes are not independent draws.
 
-    Episode 1 deliberately flies well away from trim, which saturates several
-    of steady_flight's pinned bounds; the clip is expected here, not a defect.
+    Episode 1 deliberately flies well away from trim, which saturates
+    pitch_rate, vertical_speed, heading_error_deg and roll against
+    steady_flight's pinned bounds; the clip is expected here, not a defect.
+    The mark names exactly those four: a future change that saturates a
+    fifth feature here should still show up as a warning.
     """
     scenario = make_steady_flight_scenario(max_episode_steps=None)
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())

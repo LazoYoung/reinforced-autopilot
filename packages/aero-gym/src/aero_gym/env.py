@@ -185,7 +185,7 @@ class AeroGymEnv(gym.Env):
             "value the agent sees has been clipped. Widen the bound in the "
             "scenario or fix the feature.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
     def _pace_real_time(self) -> None:

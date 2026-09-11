@@ -44,13 +44,17 @@ def _assert_eval_report_printed(out: str) -> None:
 
 
 @pytest.mark.filterwarnings(
-    "ignore:observation feature '.*' (saturated at|is NaN):RuntimeWarning"
+    "ignore:observation feature '(vertical_speed|heading_error_deg)' "
+    "(saturated at|is NaN):RuntimeWarning"
 )
 def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
     """Resume is checked on global_step, because `frames` cannot see it.
 
     DQN's exploratory early actions fly steady_flight well outside its pinned
-    bounds (vertical_speed, heading_error_deg); that saturation is expected.
+    bounds vertical_speed and heading_error_deg (checked deterministic under
+    this config's seed=0/cpu by running twice); that saturation is expected.
+    The mark names exactly those two: a future change that saturates a third
+    feature here should still show up as a warning.
 
     Whether cmd_resume seeds Trainer.frames from the checkpoint or leaves it at
     0, the loop is `while frames < total_steps`, so both paths stop at the same
@@ -97,11 +101,14 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
 
 
 @pytest.mark.filterwarnings(
-    "ignore:observation feature '.*' (saturated at|is NaN):RuntimeWarning"
+    "ignore:observation feature '(vertical_speed|heading_error_deg)' "
+    "(saturated at|is NaN):RuntimeWarning"
 )
 def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path, capsys):
     """DQN's exploratory early actions fly steady_flight well outside its
-    pinned bounds (vertical_speed, heading_error_deg); expected saturation."""
+    pinned bounds vertical_speed and heading_error_deg; expected saturation.
+    The mark names exactly those two: a third feature saturating here should
+    still show up as a warning."""
     config = dict(CONFIG)
     config["checkpoint"] = {
         "dir": str(tmp_path / "checkpoints"),

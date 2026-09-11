@@ -149,8 +149,8 @@ def test_experience_source_spawns_one_independent_stream_per_sub_env():
     "(saturated at|is NaN):RuntimeWarning"
 )
 def test_a_jittered_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
-    """No field this checkpoint carries distinguishes a resume from a restart
-    in this codebase, measured rather than assumed: cmd_resume reseeds
+    """Under this config, no field this checkpoint carries distinguishes a
+    resume from a restart, measured rather than assumed: cmd_resume reseeds
     ExperienceSource from cfg.seed at construction (the fact behind Deviation
     1), so a from-scratch restart to the same seed and total_steps
     deterministically replays the exact early trajectory a real resume's first
@@ -159,10 +159,12 @@ def test_a_jittered_run_survives_start_checkpoint_resume_and_eval(tmp_path, caps
     extension swept from 1 to 520+ frames past first's) and best_return
     (measured 31.914803038284724 for all three, bit-identical) converge to the
     same value either way, because the restart's deterministic prefix already
-    contains the first run's own peak eval. What is asserted instead is what
-    is actually true: frames advance past the first run's own count, the
-    jittered params round-trip through the checkpoint, and the resumed run
-    still evals cleanly.
+    contains the first run's own peak eval. frames itself separates by one
+    (1047 vs 1046), a coincidence of eval scheduling rather than a property,
+    which is why only its direction is asserted below. What is asserted
+    instead is what is actually true: frames advance past the first run's
+    own count, the jittered params round-trip through the checkpoint, and
+    the resumed run still evals cleanly.
     """
     path = _config(
         tmp_path,

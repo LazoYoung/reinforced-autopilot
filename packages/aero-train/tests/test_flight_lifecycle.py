@@ -48,22 +48,21 @@ def _assert_eval_report_printed(out: str) -> None:
     "(saturated at|is NaN):RuntimeWarning"
 )
 def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
-    """Resume is checked on global_step, because `frames` cannot see it.
+    """Under this config, no field the checkpoint carries distinguishes a
+    real resume from a restart. Measured, not assumed: cli._train(cfg_1024,
+    resume_from=None) run against a snapshot of the post-first-run checkpoint
+    directory reaches the same global_step (15, delta 8 from first's 7) as a
+    real cmd_resume. best_return differs between the two (31.911 vs 32.387)
+    only as a coincidence of eval scheduling, not as a property, so it is not
+    asserted below either. What is asserted is what is actually true: the
+    final iteration was checkpointed, frames advance past the first run's own
+    count, the config round-trips, and the resumed run still evals cleanly.
 
     DQN's exploratory early actions fly steady_flight well outside its pinned
     bounds vertical_speed and heading_error_deg (checked deterministic under
     this config's seed=0/cpu by running twice); that saturation is expected.
     The mark names exactly those two: a future change that saturates a third
     feature here should still show up as a warning.
-
-    Whether cmd_resume seeds Trainer.frames from the checkpoint or leaves it at
-    0, the loop is `while frames < total_steps`, so both paths stop at the same
-    ceiling for any total_steps. global_step separates them: updates_per_iter=1
-    and a buffer reloaded already past warmup mean one gradient step per
-    iteration, so its delta is the iteration count each path actually ran,
-    and a real resume, starting past halfway, runs about half of a restart's.
-    So a moved constant that is still roughly half a restart's is the scenario's
-    dynamics drifting, not a resume regression.
     """
     config = dict(CONFIG)
     config["checkpoint"] = {
@@ -87,14 +86,6 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
     second = load_checkpoint(latest)
     assert second["frames"] > first["frames"]
     assert second["config"]["env"]["scenario"] == "steady_flight"
-
-    # 8 tracks the flight dynamics, not just the config: autoreset rows are
-    # masked out of the frame count. A restart measures 17 here.
-    assert second["global_step"] - first["global_step"] == 8, (
-        "resume did not continue from the saved global_step; frames alone "
-        "can't tell a real resume from a restart, since both converge on the "
-        "same total_steps ceiling"
-    )
 
     assert cli.main(["eval", str(latest), "--episodes", "2"]) == 0
     _assert_eval_report_printed(capsys.readouterr().out)

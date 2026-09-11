@@ -361,6 +361,28 @@ def test_the_first_observation_of_an_episode_is_not_stale():
         env.close()
 
 
+def test_reset_runs_the_physics_settle_steps_times(monkeypatch):
+    """settle_steps must drive the exact run() count, not merely "at least one".
+
+    c172p's elevator, aileron, rudder and throttle channels are pure
+    aerosurface_scale with no lag filter, so every fcs/*-pos-norm reaches its
+    commanded value after a single run() call; no observation this aircraft
+    publishes can tell settle_steps=1 apart from settle_steps=12. Counting
+    run() invocations is the only way to see the loop trip count directly.
+    """
+    scenario = make_steady_flight_scenario(max_episode_steps=None)
+    aircraft, initial_conditions, settle_steps = _ic(scenario)
+    sim = JSBSimSimulator()
+    calls = []
+    original_run = sim.run
+    monkeypatch.setattr(sim, "run", lambda: (calls.append(1), original_run())[-1])
+    try:
+        sim.reset(aircraft, initial_conditions, settle_steps)
+        assert len(calls) == settle_steps
+    finally:
+        sim.close()
+
+
 def test_initial_action_describes_the_aircrafts_startup_state():
     """Every axis, not just throttle: throttle is the one axis where command
     and position coincide (it has no trim term), so a throttle-only assertion

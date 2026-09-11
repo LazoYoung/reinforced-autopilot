@@ -36,11 +36,34 @@ already means two other things nearby, so it is used in the training layer only.
 
 ## Environment layer (`aero_gym`)
 
-**Scenario** — a frozen dataclass holding everything task-specific: initial
-conditions, which flight variables are actions and which are observations, the
+`aero_gym` ships no scenarios of its own; it owns the concept and the machinery,
+and every task lives outside the package.
+
+**Scenario** — a frozen dataclass holding everything task-specific: a
+`setup_fn`, which flight variables are actions and which are observations, the
 reward function, the aircraft, `agent_hz`, and `max_episode_steps`. The env itself
 holds no task knowledge. A scenario is the closest thing this project has to a
 "task" or "level".
+
+**Episode setup** — one episode's starting situation plus the context that goes
+with it, drawn by a scenario's `setup_fn` from the environment's own seeded
+generator at each `reset()`. The pairing lets a scenario start somewhere new
+every episode while a seeded run stays exactly reproducible.
+
+**Context** — the episode's targets, sampled alongside its `EpisodeSetup` and
+not required to derive from it: a hold task points the target at the start, a
+"go to" task draws the two independently. Reaches the observation features, the
+reward function, and `info["context"]`.
+
+**Registry** — `aero_gym.registry`, which resolves a scenario name to its
+builder. A scenario registers itself with `@scenario("name", params=...)`; there
+is no map to edit and no import to add. `build_scenario` looks up, validates,
+and binds params in one call.
+
+**Sandbox** — the top-level `src/sandbox/` package where this project's own
+scenarios, configs and examples live. It is discovered by the registry through
+the `aero_gym.scenarios` entry point and imported by nothing in `aero_gym` or
+`aero_train`.
 
 **Simulator** — the flight-model backend ABC (`dt`, `reset`, `set_control`, `run`,
 `observe`, `close`). JSBSim is currently the only implementation. Deliberately

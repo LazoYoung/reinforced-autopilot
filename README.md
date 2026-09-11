@@ -59,10 +59,10 @@ leave a truncated checkpoint behind.
 
 ```python
 from aero_gym import AeroGymEnv
-from aero_gym.scenarios import make_steady_flight_scenario
+from aero_gym.registry import build_scenario
 
-env = AeroGymEnv(make_steady_flight_scenario())          # headless
-# env = AeroGymEnv(..., render_mode="flightgear")        # with visualization
+env = AeroGymEnv(build_scenario("steady_flight"))     # headless
+# env = AeroGymEnv(..., render_mode="flightgear")     # with visualization
 
 obs, info = env.reset(seed=0)
 for _ in range(100):
@@ -144,33 +144,104 @@ at it — no code change. `tracking.enabled: false` turns tracking off entirely.
 
 ## Defining a scenario
 
+Scenarios live in `src/sandbox/scenarios/`. Drop a Python file there, decorate a builder,
+and it is available by name: nothing else is wired up, and no installed package is edited.
+
 ```python
-from aero_gym.scenario import InitialConditions, Scenario
+# src/sandbox/scenarios/wings_level.py
+from dataclasses import dataclass
+
+import numpy as np
+
+from aero_gym.registry import scenario
+from aero_gym.scenario import EpisodeSetup, InitialConditions, Scenario, raw
 from aero_gym.variables import FlightVariable as V
 
-def my_reward(t):  # t: Transition(prev_obs, obs, action) — dicts keyed by FlightVariable
-    reward = -abs(t.obs[V.ROLL]) / 60.0
-    terminated = t.obs[V.ALTITUDE] < 1000.0
-    return reward, terminated
 
-scenario = Scenario(
-    name="wings-level",
-    initial_conditions=InitialConditions(
-        latitude_deg=37.62, longitude_deg=-122.38, altitude_ft=5000.0,
-        heading_deg=270.0, pitch_deg=0.0, roll_deg=20.0, airspeed_kts=95.0,
-    ),
-    action_variables=(V.AILERON, V.RUDDER),
-    observation_variables=(V.ROLL, V.ROLL_RATE, V.YAW_RATE, V.AOS, V.ALTITUDE),
-    reward_fn=my_reward,
-    aircraft="c172p",
-    agent_hz=10.0,
-)
+@dataclass(frozen=True)
+class WingsLevelParams:
+    """Every knob the task has. Defaults make it flyable as it stands."""
+
+    roll_limit_deg: float = 60.0
+    roll_jitter_deg: float = 20.0
+
+
+@scenario("wings_level", params=WingsLevelParams)
+def build(params: WingsLevelParams) -> Scenario:
+    def setup_fn(rng: np.random.Generator) -> EpisodeSetup:
+        """One episode's start, drawn from the environment's own generator."""
+        roll = rng.uniform(-params.roll_jitter_deg, params.roll_jitter_deg)
+        return EpisodeSetup(
+            InitialConditions(
+                latitude_deg=37.62, longitude_deg=-122.38, altitude_ft=5000.0,
+                heading_deg=270.0, pitch_deg=0.0, roll_deg=roll, airspeed_kts=95.0,
+            ),
+            {"target_roll_deg": 0.0},
+        )
+
+    def reward_fn(t):
+        """t: Transition(prev_obs, obs, action, context), dicts keyed by FlightVariable."""
+        error = abs(t.obs[V.ROLL] - t.context["target_roll_deg"])
+        return 1.0 - error / params.roll_limit_deg, error > params.roll_limit_deg
+
+    return Scenario(
+        name="wings-level",
+        setup_fn=setup_fn,
+        reward_fn=reward_fn,
+        action_variables=(V.AILERON, V.RUDDER),
+        observation_variables=(V.ROLL, V.ROLL_RATE, V.YAW_RATE, V.AOS),
+        observation_features=(
+            raw(V.ROLL, -params.roll_limit_deg, params.roll_limit_deg),
+            raw(V.ROLL_RATE, -60.0, 60.0),
+            raw(V.YAW_RATE, -30.0, 30.0),
+            raw(V.AOS, -20.0, 20.0),
+        ),
+        context_keys=("target_roll_deg",),
+        aircraft="c172p",
+        agent_hz=10.0,
+    )
 ```
 
-Each `Scenario` selects which control axes and observations the agent sees, defines the
-reward function, the initial flight condition, and the aircraft model. The environment
-itself holds no task knowledge — it talks only to the `Simulator` interface, which is what
-allows a second backend to be added without touching the RL side.
+Train it, and tweak it from the config or the command line:
+
+```yaml
+env:
+  scenario: wings_level
+  params:
+    roll_jitter_deg: 30
+```
+
+```sh
+uv run autopilot train configs/my_run.yaml --override env.params.roll_limit_deg=45
+```
+
+Four things carry the design:
+
+- **`setup_fn` runs once per episode**, with the environment's own seeded generator, so one
+  scenario can train an agent across many starting situations while a seeded run stays exactly
+  reproducible.
+- **The context is the episode's targets**, and it does not have to derive from where the
+  episode began. A hold task points the target at the start; a "go to" task draws the two
+  independently. It reaches the feature functions, the reward function, and `info["context"]`.
+- **Observation bounds are declared, not derived.** The `Box` is built once and must stay fixed,
+  because the policy's input scaling is part of what it learned. A feature that leaves its bounds
+  is clipped and warns once, naming itself, so a wrong bound is visible rather than silent.
+- **The params dataclass is the list of what is tweakable.** A name that is not a field on it is
+  rejected before any environment is built, and the error names the field and lists the valid ones.
+
+An installed package can ship scenarios too, by declaring the same entry point its own
+`pyproject.toml`:
+
+```toml
+[project.entry-points."aero_gym.scenarios"]
+my-tasks = "my_package.scenarios"
+```
+
+AeroGymEnv talks only to the `Simulator` interface and holds no task knowledge of its own,
+which is what lets a second flight simulator be added without touching the RL side;
+`Scenario` carries everything task specific; and the sandbox at `src/sandbox/` holds the
+task definitions, the configs and the examples, with nothing in `aero_gym` or `aero_train`
+importing it.
 
 Units are canonical across all simulator backends. Every backend converts into them and
 into the pilot sign convention, so scenarios and trained agents stay portable.
@@ -198,8 +269,8 @@ Naming an aircraft is therefore enough to get a flyable task: the scenario takes
 altitude and airspeed from the profile when you don't specify them.
 
 ```python
-make_steady_flight_scenario(aircraft="c172p")  # 5000 ft at 95 kts
-make_steady_flight_scenario(aircraft="737")    # 30000 ft at 280 kts
+build_scenario("steady_flight", {"aircraft": "c172p"})  # 5000 ft at 95 kts
+build_scenario("steady_flight", {"aircraft": "737"})    # 30000 ft at 280 kts
 ```
 
 An aircraft with no profile still flies and still renders — JSBSim and FlightGear agree on most

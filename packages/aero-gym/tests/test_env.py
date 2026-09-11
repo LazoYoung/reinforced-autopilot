@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import warnings
 
 import numpy as np
 import pytest
@@ -285,27 +286,40 @@ def test_a_saturated_observation_warns_and_names_the_feature(fake_simulator):
     assert obs[0] == pytest.approx(100.0)
 
 
-def test_the_saturation_warning_fires_once_per_feature_not_once_per_step(
-    fake_simulator, recwarn
-):
+def test_the_saturation_warning_fires_once_per_feature_not_once_per_step(fake_simulator):
     """At 10 Hz an excursion would otherwise emit a warning every 100 ms for
-    the rest of the run, which is how a useful warning becomes noise."""
+    the rest of the run, which is how a useful warning becomes noise.
+
+    recwarn cannot tell this apart from a code path that warns on every
+    step: pytest applies its own "default" filter ahead of recwarn's, which
+    dedups by (message, category, lineno) regardless of our own guard, since
+    every step() call here comes from the same source line with the same
+    message. simplefilter("always") in an explicit context bypasses that.
+    """
     env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
     env.reset(seed=0)
     fake_simulator.state[V.ROLL] = 250.0
-    for _ in range(5):
-        env.step(np.zeros(env.action_space.shape, np.float32))
-    assert len([w for w in recwarn if issubclass(w.category, RuntimeWarning)]) == 1
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        for _ in range(5):
+            env.step(np.zeros(env.action_space.shape, np.float32))
+    assert len([w for w in caught if issubclass(w.category, RuntimeWarning)]) == 1
 
 
-def test_an_in_bounds_observation_stays_silent(fake_simulator, recwarn):
-    """The other half: a warning that always fires proves nothing."""
+def test_an_in_bounds_observation_stays_silent(fake_simulator):
+    """The other half: a warning that always fires proves nothing.
+
+    Same explicit "always" filter as the sibling test, so this stays a fair
+    comparison rather than one relying on pytest's own dedup to look silent.
+    """
     env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
     env.reset(seed=0)
     fake_simulator.state[V.ROLL] = 12.0
-    for _ in range(5):
-        env.step(np.zeros(env.action_space.shape, np.float32))
-    assert [w for w in recwarn if issubclass(w.category, RuntimeWarning)] == []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        for _ in range(5):
+            env.step(np.zeros(env.action_space.shape, np.float32))
+    assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == []
 
 
 def test_a_nan_feature_is_reported_as_nan_not_as_saturation(fake_simulator):

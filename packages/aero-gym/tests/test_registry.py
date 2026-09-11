@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import sys
 import textwrap
 from dataclasses import dataclass
@@ -28,15 +29,21 @@ def clean(monkeypatch):
     """An empty registry with discovery un-run, restored afterwards."""
     monkeypatch.setattr(registry, "_REGISTRY", {})
     monkeypatch.setattr(registry, "_DISCOVERED", None)
+    # Every `clean` test also stubs _entry_point_roots; skip that here and
+    # discover() would import the real sandbox and strand it in sys.modules.
     monkeypatch.setattr(registry, "_entry_point_roots", lambda: ())
     return registry
 
 
-def _write_package(tmp_path, monkeypatch, files: dict[str, str], root="probe"):
+def _write_package(
+    tmp_path, monkeypatch, files: dict[str, str], root="probe", stub_roots=True
+):
     """Put a real importable package on sys.path, with real module files.
 
     Real files rather than stubs because the failure being tested is an import
     failure, and only an actual import produces the traceback discovery keeps.
+    `stub_roots=False` leaves `_entry_point_roots` alone, for a test that
+    exercises the real one against a crafted `importlib.metadata` entry point.
     """
     package = tmp_path / root
     (package / "scenarios").mkdir(parents=True)
@@ -47,7 +54,8 @@ def _write_package(tmp_path, monkeypatch, files: dict[str, str], root="probe"):
     for name in list(sys.modules):
         if name == root or name.startswith(root + "."):
             del sys.modules[name]
-    monkeypatch.setattr(registry, "_entry_point_roots", lambda: (f"{root}.scenarios",))
+    if stub_roots:
+        monkeypatch.setattr(registry, "_entry_point_roots", lambda: (f"{root}.scenarios",))
 
 
 GOOD = """
@@ -162,6 +170,28 @@ def test_discovery_walks_nested_subpackages(clean, tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "_entry_point_roots", lambda: ("probe.scenarios",))
     clean.discover()
     assert [r.name for r in clean.registered()] == ["good"]
+
+
+def test_a_pkg_colon_attr_entry_point_value_still_discovers_its_scenarios(
+    tmp_path, monkeypatch
+):
+    """`pkg.scenarios:attr` is a legal entry-point value and a plausible
+    mistype of `pkg.scenarios`, since the README hands readers a snippet to
+    copy; only the module half is importable, so `_entry_point_roots` must
+    use `.module`, not the whole `.value`. Not the `clean` fixture: it stubs
+    out `_entry_point_roots`, and this test exercises the real one.
+    """
+    monkeypatch.setattr(registry, "_REGISTRY", {})
+    monkeypatch.setattr(registry, "_DISCOVERED", None)
+    _write_package(tmp_path, monkeypatch, {"good.py": GOOD}, stub_roots=False)
+    point = importlib.metadata.EntryPoint(
+        name="probe", value="probe.scenarios:build", group=registry.ENTRY_POINT_GROUP
+    )
+    monkeypatch.setattr(
+        importlib.metadata, "entry_points", lambda group=None: (point,)
+    )
+    registry.discover()
+    assert [r.name for r in registry.registered()] == ["good"]
 
 
 def test_discovery_runs_once_per_process(clean, tmp_path, monkeypatch):

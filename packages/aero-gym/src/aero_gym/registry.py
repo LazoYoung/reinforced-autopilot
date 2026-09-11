@@ -85,7 +85,7 @@ def scenario(name: str, *, params: type | None = None):
 def _entry_point_roots() -> tuple[str, ...]:
     """Package names to scan, one per entry point in the group."""
     points = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
-    return tuple(point.value for point in points)
+    return tuple(point.module for point in points)
 
 
 def _import_tree(

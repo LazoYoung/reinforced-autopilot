@@ -154,8 +154,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from aero_gym.registry import scenario
-from aero_gym.scenario import EpisodeSetup, InitialConditions, Scenario, raw
-from aero_gym.variables import FlightVariable as V
+from aero_gym.scenario import (
+    Context, EpisodeSetup, InitialConditions, Observation, ObservationFeature,
+    Scenario, Transition, raw,
+)
+from aero_gym.variables import FlightVariable as V, VariableSpec
 
 
 @dataclass(frozen=True)
@@ -179,8 +182,16 @@ def build(params: WingsLevelParams) -> Scenario:
             {"target_roll_deg": 0.0},
         )
 
-    def reward_fn(t):
-        """t: Transition(prev_obs, obs, action, context), dicts keyed by FlightVariable."""
+    def roll_error_deg(obs: Observation, context: Context) -> float:
+        """One observation feature: how far off target this step's roll is.
+
+        An Observation is this step's readings keyed by FlightVariable; a
+        Context is the episode's targets, the ones setup_fn drew above.
+        """
+        return obs[V.ROLL] - context["target_roll_deg"]
+
+    def reward_fn(t: Transition) -> tuple[float, bool]:
+        """Maps one step to (reward, terminated)."""
         error = abs(t.obs[V.ROLL] - t.context["target_roll_deg"])
         return 1.0 - error / params.roll_limit_deg, error > params.roll_limit_deg
 
@@ -191,7 +202,12 @@ def build(params: WingsLevelParams) -> Scenario:
         action_variables=(V.AILERON, V.RUDDER),
         observation_variables=(V.ROLL, V.ROLL_RATE, V.YAW_RATE, V.AOS),
         observation_features=(
-            raw(V.ROLL, -params.roll_limit_deg, params.roll_limit_deg),
+            ObservationFeature(
+                "roll_error_deg",
+                VariableSpec("deg", -params.roll_limit_deg, params.roll_limit_deg,
+                             "roll relative to this episode's target"),
+                roll_error_deg,
+            ),
             raw(V.ROLL_RATE, -60.0, 60.0),
             raw(V.YAW_RATE, -30.0, 30.0),
             raw(V.AOS, -20.0, 20.0),

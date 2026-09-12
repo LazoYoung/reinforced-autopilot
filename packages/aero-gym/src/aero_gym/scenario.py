@@ -17,6 +17,34 @@ from .variables import (
 )
 
 
+Observation = dict[FlightVariable, float]
+"""What the agent sees: one canonical reading per observed variable.
+
+Keys are the scenario's `observation_variables`, values are in that variable's
+canonical unit (degrees, deg/s, feet, fpm, normalized control positions). A
+feature reads the ones it needs by key, for example
+`obs[FlightVariable.ALTITUDE]`.
+"""
+
+Action = dict[FlightVariable, float]
+"""What the agent commanded: one value per action variable.
+
+The same shape as an Observation, deliberately named apart: the keys come from
+the scenario's `action_variables` and the values follow the pilot sign
+convention (+elevator is pitch up, +aileron is roll right, +rudder is yaw right).
+"""
+
+Context = Mapping[str, float]
+"""One episode's targets, fixed for the whole episode.
+
+Drawn alongside the initial conditions by the scenario's `setup_fn`, so a
+feature can measure against *this* episode's target rather than a number fixed
+when the scenario was built. Keys are the scenario's declared `context_keys`,
+which the environment validates at reset, for example
+`context["target_altitude_ft"]`.
+"""
+
+
 @dataclass(frozen=True)
 class InitialConditions:
     """Initial flight condition in 6 DoF plus airspeed.
@@ -45,7 +73,7 @@ class EpisodeSetup:
     """
 
     initial_conditions: InitialConditions
-    context: Mapping[str, float] = field(default_factory=dict)
+    context: Context = field(default_factory=dict)
 
 
 SetupFn = Callable[[np.random.Generator], EpisodeSetup]
@@ -60,12 +88,16 @@ def fixed_setup(ic: InitialConditions, **context: float) -> SetupFn:
 
 @dataclass(frozen=True)
 class Transition:
-    """One agent step, in canonical units, passed to the reward function."""
+    """One agent step, in canonical units, passed to the reward function.
 
-    prev_obs: dict[FlightVariable, float]
-    obs: dict[FlightVariable, float]
-    action: dict[FlightVariable, float]
-    context: Mapping[str, float] = field(default_factory=dict)
+    `prev_obs` is what the agent saw when it chose `action`, and `obs` is what
+    resulted, so a reward function can score the change as well as the state.
+    """
+
+    prev_obs: Observation
+    obs: Observation
+    action: Action
+    context: Context = field(default_factory=dict)
     """The episode's targets, as sampled by the scenario's setup_fn."""
 
 
@@ -87,11 +119,23 @@ class ObservationFeature:
     A feature's bounds are declared by its author, not derived: for a hold task
     they are usually the limit that terminates on it, but a "go to" task starts
     far outside its tolerance band and needs a wider range than its terminator.
+
+    `name` labels the entry, `spec` carries its unit and the bounds the value is
+    clipped to, and `fn` computes it. `fn` is called once per step with this
+    step's Observation and the episode's Context, and returns the single number
+    that occupies this slot of the Box:
+
+        ObservationFeature(
+            "altitude_error_ft",
+            VariableSpec("ft", -500.0, 500.0, "altitude above target"),
+            lambda obs, context: obs[FlightVariable.ALTITUDE]
+            - context["target_altitude_ft"],
+        )
     """
 
     name: str
     spec: VariableSpec
-    fn: Callable[[dict[FlightVariable, float], Mapping[str, float]], float]
+    fn: Callable[[Observation, Context], float]
 
 
 def raw(

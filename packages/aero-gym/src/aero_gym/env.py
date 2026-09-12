@@ -10,7 +10,7 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
-from .scenario import Scenario, Transition
+from .scenario import Observation, Scenario, Transition
 from .simulator import Simulator
 from .variables import ACTION_SPECS, FlightVariable
 
@@ -44,7 +44,7 @@ class AeroGymEnv(gym.Env):
 
         self._steps_per_action = max(1, round(1.0 / (simulator.dt * scenario.agent_hz)))
         self._elapsed_steps = 0
-        self._prev_obs: dict[FlightVariable, float] | None = None
+        self._prev_obs: Observation | None = None
         self._visualization_started = False
         self._next_frame_deadline: float | None = None
         self._context: dict[str, float] = {}
@@ -149,10 +149,10 @@ class AeroGymEnv(gym.Env):
     def close(self) -> None:
         self.simulator.close()
 
-    def _observe(self) -> dict[FlightVariable, float]:
+    def _observe(self) -> Observation:
         return {v: self.simulator.observe(v) for v in self.scenario.observation_variables}
 
-    def _to_array(self, obs: dict[FlightVariable, float]) -> np.ndarray:
+    def _to_array(self, obs: Observation) -> np.ndarray:
         values = np.array(
             [f.fn(obs, self._context) for f in self.scenario.observation_features],
             np.float32,

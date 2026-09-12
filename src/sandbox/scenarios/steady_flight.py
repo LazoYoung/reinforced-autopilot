@@ -119,8 +119,9 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
     jitter the start is drawn per episode and the target follows it, which
     keeps the task a hold rather than turning it into an unreachable go-to.
     """
-    p = params if params is not None else SteadyFlightParams()
+    p = params or SteadyFlightParams()
     profile = profile_for(p.aircraft)
+    # `or` would read an explicit 0 as unset and substitute the cruise value.
     base_altitude_ft = (
         profile.cruise_altitude_ft if p.altitude_ft is None else p.altitude_ft
     )

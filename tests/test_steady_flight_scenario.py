@@ -292,6 +292,157 @@ def test_heading_error_at_the_antipodal_heading():
     assert heading_error_deg(current=0.0, target=180.0) == pytest.approx(-180.0)
 
 
+def _coordinated(**kwargs):
+    return make_steady_flight_scenario(
+        SteadyFlightParams(observe_sideslip=True, **kwargs)
+    )
+
+
+def test_sideslip_is_observed_only_when_asked_for():
+    """v1 and v2 are trained without it, so the default must stay off."""
+    assert V.AOS not in make_steady_flight_scenario().observation_variables
+    assert V.AOS in _coordinated().observation_variables
+
+
+def test_the_sideslip_feature_is_appended_not_inserted():
+    """Appending keeps every earlier Box column where it was, so the only
+    incompatibility with an older policy is the width, not a reshuffle."""
+    names = [f.name for f in _coordinated().observation_features]
+    assert names == PINNED_NAMES + ["aos"]
+    assert names[:-1] == [f.name for f in make_steady_flight_scenario().observation_features]
+
+
+def test_the_sideslip_feature_is_bounded_by_its_own_scale():
+    scenario = _coordinated(aos_scale_deg=8.0)
+    aos = next(f for f in scenario.observation_features if f.name == "aos")
+    assert (aos.spec.low, aos.spec.high) == (-8.0, 8.0)
+
+
+def test_coordinated_flight_on_target_still_scores_one():
+    """The convex combination must not cost anything when nothing is wrong."""
+    reward, _ = _evaluate(_coordinated(coordination_weight=0.2))
+    assert reward == pytest.approx(1.0)
+
+
+def test_sideslip_costs_exactly_its_weight_at_the_scale():
+    scenario = _coordinated(coordination_weight=0.2, aos_scale_deg=5.0)
+    reward, terminated = _evaluate(scenario, {V.AOS: 5.0})
+    assert reward == pytest.approx(0.8)
+    assert not terminated
+
+
+def test_sideslip_is_priced_on_magnitude_not_sign():
+    """A signed term would pay the agent to slip one way, which is the exact
+    behaviour being removed."""
+    scenario = _coordinated(coordination_weight=0.2, aos_scale_deg=5.0)
+    left, _ = _evaluate(scenario, {V.AOS: -4.0})
+    right, _ = _evaluate(scenario, {V.AOS: 4.0})
+    assert left == pytest.approx(right)
+
+
+def test_sideslip_saturates_instead_of_going_negative():
+    """Past the scale the term floors at zero, so the in-band reward keeps its
+    non-negative floor however violent the slip."""
+    scenario = _coordinated(coordination_weight=0.2, aos_scale_deg=5.0)
+    at_scale, _ = _evaluate(scenario, {V.AOS: 5.0})
+    far_past, _ = _evaluate(scenario, {V.AOS: 90.0})
+    assert far_past == pytest.approx(at_scale)
+    assert far_past >= 0.0
+
+
+def _moved(scenario, moves):
+    """Score one step that moved each named control by the given amount."""
+    obs = _obs(scenario)
+    prev = dict(obs)
+    for var, amount in moves.items():
+        obs[var] = prev[var] + amount
+    return scenario.reward_fn(
+        Transition(prev_obs=prev, obs=obs, action={}, context=_setup(scenario).context)
+    )[0]
+
+
+def test_holding_every_control_still_scores_one():
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+    )
+    assert _moved(scenario, {}) == pytest.approx(1.0)
+
+
+def test_moving_every_control_by_the_scale_costs_the_whole_weight():
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+    )
+    moves = dict.fromkeys(
+        (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS), 0.1
+    )
+    assert _moved(scenario, moves) == pytest.approx(0.8)
+
+
+def test_control_movement_is_averaged_over_four_axes_including_throttle():
+    """Four separate assertions in one: a sum instead of a mean quadruples each
+    cost, and dropping throttle from the mean makes its row score 1.0."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+    )
+    for var in (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS):
+        # One axis moving a full scale is a quarter of the mean, so a quarter
+        # of the weight: 1 - 0.2 * 0.25.
+        assert _moved(scenario, {var: 0.1}) == pytest.approx(0.95), var
+
+
+def test_control_movement_is_priced_on_magnitude_not_direction():
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+    )
+    assert _moved(scenario, {V.ELEVATOR_POS: -0.1}) == pytest.approx(
+        _moved(scenario, {V.ELEVATOR_POS: 0.1})
+    )
+
+
+def test_both_terms_together_still_never_score_negative_in_band():
+    """The property the whole convex shape exists to preserve, with every new
+    term at its worst and the accuracy term at the band's corner."""
+    scenario = _coordinated(
+        coordination_weight=0.3, smoothness_weight=0.3, aos_scale_deg=5.0
+    )
+    obs = _obs(
+        scenario,
+        {
+            V.ALTITUDE: 5500.0,
+            V.HEADING: 280.0,
+            V.VERTICAL_SPEED: 1000.0,
+            V.AOS: 90.0,
+        },
+    )
+    prev = dict(obs)
+    for var in (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS):
+        prev[var] = obs[var] - 1.0
+    reward, terminated = scenario.reward_fn(
+        Transition(prev_obs=prev, obs=obs, action={}, context=_setup(scenario).context)
+    )
+    assert reward == pytest.approx(0.0)
+    assert not terminated
+
+
+def test_pricing_sideslip_the_agent_cannot_see_is_rejected():
+    """Penalizing an unobserved variable makes the task partially observable,
+    which is why the body-rate version of this idea was dropped."""
+    with pytest.raises(ValueError, match="observe_sideslip"):
+        SteadyFlightParams(coordination_weight=0.2)
+
+
+def test_weights_that_crowd_out_accuracy_are_rejected():
+    with pytest.raises(ValueError, match="accuracy"):
+        SteadyFlightParams(
+            observe_sideslip=True, coordination_weight=0.6, smoothness_weight=0.4
+        )
+
+
+def test_a_negative_weight_is_rejected():
+    with pytest.raises(ValueError, match="smoothness_weight"):
+        SteadyFlightParams(smoothness_weight=-0.1)
+
+
 def test_the_scenario_is_discoverable_by_name():
     """The whole point of the registry: nothing wires this up by hand."""
     from aero_gym.registry import build_scenario, lookup

@@ -39,6 +39,13 @@ OBSERVATION_VARIABLES = (
     V.THROTTLE_POS,
 )
 
+CONTROL_POSITIONS = (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS)
+"""What the smoothness term watches: every axis the agent commands.
+
+Throttle is in deliberately. It travels its whole range over an episode, so
+excluding it would leave the noisiest axis unpriced.
+"""
+
 _BANDS = ("altitude_band_ft", "heading_band_deg", "vertical_speed_band_fpm")
 _LIMITS = (
     "roll_limit_deg",
@@ -47,6 +54,8 @@ _LIMITS = (
     "roll_rate_scale_deg_s",
     "pitch_rate_scale_deg_s",
 )
+_SCALES = ("aos_scale_deg", "control_rate_scale")
+_WEIGHTS = ("coordination_weight", "smoothness_weight")
 _JITTERS = ("altitude_jitter_ft", "heading_jitter_deg")
 
 
@@ -87,11 +96,45 @@ class SteadyFlightParams:
     """Half-width of the uniform draw around the target altitude."""
     heading_jitter_deg: float = 0.0
     """Half-width of the uniform draw around the target heading."""
+    observe_sideslip: bool = False
+    """Whether the agent sees sideslip. Off reproduces the original task."""
+    aos_scale_deg: float = 5.0
+    """Sideslip at which the coordination term reaches zero, and its bound."""
+    coordination_weight: float = 0.0
+    """Share of the reward paid for flying coordinated rather than slipping."""
+    smoothness_weight: float = 0.0
+    """Share of the reward paid for holding the controls still."""
+    control_rate_scale: float = 0.1
+    """Per-step control movement at which the smoothness term reaches zero.
+
+    Couples to aero_train's env.delta: at the same value, one full increment
+    on every axis costs the whole smoothness weight.
+    """
 
     def __post_init__(self) -> None:
         if self.agent_hz <= 0:
             raise ValueError("agent_hz must be positive")
-        for name in _BANDS + _LIMITS:
+        for name in _WEIGHTS:
+            if getattr(self, name) < 0:
+                raise ValueError(
+                    f"{name} is a reward share and must not be negative, got "
+                    f"{getattr(self, name)}"
+                )
+        # Strictly less than 1: accuracy is what makes this a flying task, and
+        # at a zero share the agent is paid the same wherever it flies.
+        if sum(getattr(self, name) for name in _WEIGHTS) >= 1.0:
+            raise ValueError(
+                f"{' + '.join(_WEIGHTS)} must leave the accuracy term a positive "
+                f"share, got {sum(getattr(self, name) for name in _WEIGHTS)}"
+            )
+        # Pricing a variable the agent cannot see makes the task partially
+        # observable: the same trap that ruled out penalizing yaw rate.
+        if self.coordination_weight > 0 and not self.observe_sideslip:
+            raise ValueError(
+                "coordination_weight prices sideslip, so observe_sideslip must "
+                "be True or the agent is penalized for a state it cannot see"
+            )
+        for name in _BANDS + _LIMITS + _SCALES:
             # Bands are divisors in reward_fn, so zero produces inf or NaN and
             # a negative one inverts the comparison that terminates on it.
             if getattr(self, name) <= 0:
@@ -188,6 +231,13 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         raw(V.RUDDER_POS),
         raw(V.THROTTLE_POS),
     )
+    # Appended, never inserted: the Box layout is positional, so adding this
+    # anywhere else would feed every later input to the wrong weight column.
+    if p.observe_sideslip:
+        features += (raw(V.AOS, -p.aos_scale_deg, p.aos_scale_deg),)
+    observation_variables = OBSERVATION_VARIABLES + (
+        (V.AOS,) if p.observe_sideslip else ()
+    )
 
     def reward_fn(t: Transition) -> tuple[float, bool]:
         """Reward in [0, 1] inside the band: 1.0 on target, 0.0 at the corner.
@@ -196,6 +246,12 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         so under a strictly-negative reward quitting on step 1 would score ~0
         and beat any real flying; Transition carries no elapsed-step count,
         so the reward function cannot price a death penalty itself.
+
+        The optional coordination and smoothness terms are mixed in as a convex
+        combination rather than subtracted, which is what keeps that floor: each
+        term is itself in [0, 1] and the shares sum to one, so no combination of
+        them can drive an in-band step below zero. Both default to a zero share,
+        which reproduces the accuracy-only reward exactly.
         """
         obs = t.obs
         alt = abs(obs[V.ALTITUDE] - t.context["target_altitude_ft"]) / p.altitude_band_ft
@@ -206,7 +262,17 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         vs = abs(obs[V.VERTICAL_SPEED]) / p.vertical_speed_band_fpm
         # Not clamped below: a violent excursion scores slightly negative on its
         # final step, which never competes with the forfeited future reward.
-        reward = 1.0 - (alt + hdg + vs) / 3.0
+        accuracy = 1.0 - (alt + hdg + vs) / 3.0
+        reward = (1.0 - p.coordination_weight - p.smoothness_weight) * accuracy
+        if p.coordination_weight > 0.0:
+            # Magnitude, not sign: a signed term would pay for slipping one way.
+            slip = min(1.0, abs(obs[V.AOS]) / p.aos_scale_deg)
+            reward += p.coordination_weight * (1.0 - slip)
+        if p.smoothness_weight > 0.0:
+            moved = sum(
+                abs(obs[pos] - t.prev_obs[pos]) for pos in CONTROL_POSITIONS
+            ) / len(CONTROL_POSITIONS)
+            reward += p.smoothness_weight * (1.0 - min(1.0, moved / p.control_rate_scale))
         terminated = (
             alt > 1.0
             or hdg > 1.0
@@ -224,7 +290,7 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         name="steady-flight",
         setup_fn=setup_fn,
         action_variables=ALL_ACTION_VARIABLES,
-        observation_variables=OBSERVATION_VARIABLES,
+        observation_variables=observation_variables,
         observation_features=features,
         reward_fn=reward_fn,
         context_keys=("target_altitude_ft", "target_heading_deg"),

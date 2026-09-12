@@ -1,5 +1,4 @@
-# Rung 2: v1 plus sideslip, observed and priced together.
-# Observing without pricing was measured and made the slip three times worse.
+# v1 plus sideslip penalty
 run_name: dqn-steady-flight-v2
 seed: 0
 total_steps: 1000000

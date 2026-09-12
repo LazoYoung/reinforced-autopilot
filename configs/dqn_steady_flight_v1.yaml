@@ -1,5 +1,4 @@
-# Rung 1 of the steady-flight ladder: the task with airspeed made visible.
-# The agent commands the throttle, so it must see what the throttle controls.
+# Steady flight with airspeed visible
 run_name: dqn-steady-flight-v1
 seed: 0
 total_steps: 1000000

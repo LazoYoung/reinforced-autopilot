@@ -1,5 +1,4 @@
-# Rung 3: v2 plus the control-stillness term, the one aimed at the jiggle.
-# control_rate_scale tracks env.delta: a full increment on every axis costs the weight.
+# v2 plus control chatter penalty
 run_name: dqn-steady-flight-v3
 seed: 0
 total_steps: 1000000

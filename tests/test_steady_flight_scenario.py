@@ -424,6 +424,123 @@ def test_both_terms_together_still_never_score_negative_in_band():
     assert not terminated
 
 
+def _held(**kwargs):
+    return make_steady_flight_scenario(SteadyFlightParams(hold_airspeed=True, **kwargs))
+
+
+def _off_speed(scenario, knots, overrides=None):
+    """Score one step flying `knots` away from the episode's target airspeed."""
+    target = _setup(scenario).context["target_airspeed_kts"]
+    return _evaluate(scenario, {V.AIRSPEED: target + knots, **(overrides or {})})
+
+
+def test_airspeed_is_observed_only_when_asked_for():
+    """v1 through v5 are trained blind to it, so the default must stay off."""
+    assert V.AIRSPEED not in make_steady_flight_scenario().observation_variables
+    assert V.AIRSPEED in _held().observation_variables
+
+
+def test_the_target_airspeed_reaches_the_context():
+    """The reward reads it from the context, not from the closure, so that an
+    airspeed that varies per episode needs no change to reward_fn."""
+    assert _setup(make_steady_flight_scenario()).context["target_airspeed_kts"] == 95.0
+    assert _setup(
+        make_steady_flight_scenario(SteadyFlightParams(aircraft="737"))
+    ).context["target_airspeed_kts"] == 280.0
+
+
+def test_the_airspeed_feature_is_appended_after_sideslip():
+    """Both appended, in a fixed order: with the order reversed, a policy
+    trained on one combination reads the other's columns transposed."""
+    names = [f.name for f in _held(observe_sideslip=True).observation_features]
+    assert names == PINNED_NAMES + ["aos", "airspeed_error_kts"]
+    assert [f.name for f in _held().observation_features] == (
+        PINNED_NAMES + ["airspeed_error_kts"]
+    )
+
+
+def test_the_airspeed_feature_is_bounded_by_its_own_band():
+    scenario = _held(airspeed_band_kts=10.0)
+    feature = next(
+        f for f in scenario.observation_features if f.name == "airspeed_error_kts"
+    )
+    assert (feature.spec.low, feature.spec.high) == (-10.0, 10.0)
+
+
+def test_on_speed_and_on_target_still_scores_one():
+    reward, terminated = _off_speed(_held(), 0.0)
+    assert reward == pytest.approx(1.0)
+    assert not terminated
+
+
+def test_airspeed_error_is_a_quarter_of_accuracy_not_a_third():
+    """A fourth equal share: summing instead of averaging, or averaging over
+    the original three, both land somewhere other than 0.75."""
+    reward, _ = _off_speed(_held(airspeed_band_kts=25.0), 25.0)
+    assert reward == pytest.approx(0.75)
+
+
+def test_holding_airspeed_dilutes_the_three_original_terms():
+    """The altitude corner costs a third of accuracy without airspeed and a
+    quarter with it. Equal shares is the claim; this is what would break."""
+    blind, _ = _evaluate(make_steady_flight_scenario(), {V.ALTITUDE: 5500.0})
+    held, _ = _off_speed(_held(), 0.0, {V.ALTITUDE: 5500.0})
+    assert blind == pytest.approx(2.0 / 3.0)
+    assert held == pytest.approx(3.0 / 4.0)
+
+
+def test_airspeed_is_priced_on_magnitude_not_sign():
+    """A signed term would pay the agent to fly fast, which is the throttle
+    behaviour being removed."""
+    scenario = _held(airspeed_band_kts=25.0)
+    slow, _ = _off_speed(scenario, -10.0)
+    fast, _ = _off_speed(scenario, 10.0)
+    assert slow == pytest.approx(fast)
+
+
+def test_airspeed_saturates_instead_of_sinking_an_in_band_step():
+    """Nothing terminates on airspeed, so without the clamp a fast enough
+    aircraft would score negative while still inside the band."""
+    scenario = _held(airspeed_band_kts=25.0)
+    at_band, _ = _off_speed(scenario, 25.0)
+    far_past, terminated = _off_speed(scenario, 500.0)
+    assert far_past == pytest.approx(at_band)
+    assert far_past >= 0.0
+    assert not terminated
+
+
+def test_every_term_at_its_worst_still_never_scores_negative_in_band():
+    """The floor the convex shape exists to preserve, now with four accuracy
+    shares and both weighted terms at their worst simultaneously."""
+    scenario = _held(
+        observe_sideslip=True, coordination_weight=0.3, smoothness_weight=0.3
+    )
+    obs = _obs(
+        scenario,
+        {
+            V.ALTITUDE: 5500.0,
+            V.HEADING: 280.0,
+            V.VERTICAL_SPEED: 1000.0,
+            V.AOS: 90.0,
+            V.AIRSPEED: 595.0,
+        },
+    )
+    prev = dict(obs)
+    for var in (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS):
+        prev[var] = obs[var] - 1.0
+    reward, terminated = scenario.reward_fn(
+        Transition(prev_obs=prev, obs=obs, action={}, context=_setup(scenario).context)
+    )
+    assert reward == pytest.approx(0.0)
+    assert not terminated
+
+
+def test_a_zero_airspeed_band_is_rejected():
+    """It is a divisor in reward_fn, like the three bands that terminate."""
+    with pytest.raises(ValueError, match="airspeed_band_kts"):
+        SteadyFlightParams(airspeed_band_kts=0.0)
+
+
 def test_pricing_sideslip_the_agent_cannot_see_is_rejected():
     """Penalizing an unobserved variable makes the task partially observable,
     which is why the body-rate version of this idea was dropped."""

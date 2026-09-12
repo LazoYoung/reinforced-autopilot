@@ -46,7 +46,12 @@ Throttle is in deliberately. It travels its whole range over an episode, so
 excluding it would leave the noisiest axis unpriced.
 """
 
-_BANDS = ("altitude_band_ft", "heading_band_deg", "vertical_speed_band_fpm")
+_BANDS = (
+    "altitude_band_ft",
+    "heading_band_deg",
+    "vertical_speed_band_fpm",
+    "airspeed_band_kts",
+)
 _LIMITS = (
     "roll_limit_deg",
     "pitch_limit_deg",
@@ -64,10 +69,10 @@ class SteadyFlightParams:
     """Everything tweakable about the steady-flight task.
 
     The bands define both the observation bounds and the reward's normalizers,
-    so narrowing one makes the task harder in all three places at once. The
-    two rate scales are the only bounds not derived from a termination
-    condition; they exist so an excursion saturates instead of wrecking the
-    observation scale.
+    so narrowing one makes the task harder in all three places at once. The two
+    rate scales and airspeed_band_kts are the only bounds not derived from a
+    termination condition; they exist so an excursion saturates instead of
+    wrecking the observation scale.
 
     max_episode_steps is deliberately absent. It is a field every Scenario has,
     so repeating it here would be boilerplate; a caller applies it with
@@ -96,6 +101,18 @@ class SteadyFlightParams:
     """Half-width of the uniform draw around the target altitude."""
     heading_jitter_deg: float = 0.0
     """Half-width of the uniform draw around the target heading."""
+    hold_airspeed: bool = False
+    """Whether airspeed joins the task: observed, and a fourth share of accuracy.
+
+    One switch rather than a flag plus a weight, so the reward can never price
+    an airspeed the agent cannot see.
+    """
+    airspeed_band_kts: float = 25.0
+    """Airspeed error at which that share reaches zero, and its bound.
+
+    Unlike the other three bands this one does not terminate, so its share is
+    clamped instead: see reward_fn.
+    """
     observe_sideslip: bool = False
     """Whether the agent sees sideslip. Off reproduces the original task."""
     aos_scale_deg: float = 5.0
@@ -155,7 +172,10 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
     band: altitude within altitude_band_ft of target, heading within
     heading_band_deg, and vertical speed within vertical_speed_band_fpm.
     Reward is 1.0 on target and 0.0 at the band's corner. Leaving the band,
-    or the wider flight envelope, ends the episode.
+    or the wider flight envelope, ends the episode. Airspeed is scored when
+    hold_airspeed is set but never ends an episode: the aoa_limit_deg check
+    already catches the slow end, and a fourth way to die would change the
+    task more than pricing the throttle's effect does.
 
     Altitude and airspeed default to a cruise the chosen aircraft can hold, so
     that naming an aircraft is enough to get a flyable task. With a non-zero
@@ -196,7 +216,11 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
                 roll_deg=0.0,
                 airspeed_kts=airspeed_kts,
             ),
-            {"target_altitude_ft": altitude_ft, "target_heading_deg": heading_deg},
+            {
+                "target_altitude_ft": altitude_ft,
+                "target_heading_deg": heading_deg,
+                "target_airspeed_kts": airspeed_kts,
+            },
         )
 
     features = (
@@ -231,12 +255,28 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         raw(V.RUDDER_POS),
         raw(V.THROTTLE_POS),
     )
-    # Appended, never inserted: the Box layout is positional, so adding this
-    # anywhere else would feed every later input to the wrong weight column.
+    # Appended, never inserted, and sideslip always before airspeed: the Box
+    # layout is positional, so any other order moves every later input.
     if p.observe_sideslip:
         features += (raw(V.AOS, -p.aos_scale_deg, p.aos_scale_deg),)
-    observation_variables = OBSERVATION_VARIABLES + (
-        (V.AOS,) if p.observe_sideslip else ()
+    if p.hold_airspeed:
+        features += (
+            ObservationFeature(
+                "airspeed_error_kts",
+                VariableSpec(
+                    "kt",
+                    -p.airspeed_band_kts,
+                    p.airspeed_band_kts,
+                    "airspeed minus target",
+                ),
+                # actual - target, matching altitude_error_ft: positive is fast.
+                lambda obs, ctx: obs[V.AIRSPEED] - ctx["target_airspeed_kts"],
+            ),
+        )
+    observation_variables = (
+        OBSERVATION_VARIABLES
+        + ((V.AOS,) if p.observe_sideslip else ())
+        + ((V.AIRSPEED,) if p.hold_airspeed else ())
     )
 
     def reward_fn(t: Transition) -> tuple[float, bool]:
@@ -252,6 +292,11 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         term is itself in [0, 1] and the shares sum to one, so no combination of
         them can drive an in-band step below zero. Both default to a zero share,
         which reproduces the accuracy-only reward exactly.
+
+        hold_airspeed instead divides accuracy itself, adding airspeed error as
+        a fourth equal share alongside altitude, heading and vertical speed.
+        That changes the reward's scale, so returns are comparable only between
+        runs that set it the same way.
         """
         obs = t.obs
         alt = abs(obs[V.ALTITUDE] - t.context["target_altitude_ft"]) / p.altitude_band_ft
@@ -260,9 +305,20 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
             / p.heading_band_deg
         )
         vs = abs(obs[V.VERTICAL_SPEED]) / p.vertical_speed_band_fpm
+        errors = [alt, hdg, vs]
+        if p.hold_airspeed:
+            # Clamped, unlike the three above: nothing terminates on airspeed,
+            # so an unclamped share could sink an in-band step below zero.
+            errors.append(
+                min(
+                    1.0,
+                    abs(obs[V.AIRSPEED] - t.context["target_airspeed_kts"])
+                    / p.airspeed_band_kts,
+                )
+            )
         # Not clamped below: a violent excursion scores slightly negative on its
         # final step, which never competes with the forfeited future reward.
-        accuracy = 1.0 - (alt + hdg + vs) / 3.0
+        accuracy = 1.0 - sum(errors) / len(errors)
         reward = (1.0 - p.coordination_weight - p.smoothness_weight) * accuracy
         if p.coordination_weight > 0.0:
             # Magnitude, not sign: a signed term would pay for slipping one way.
@@ -293,7 +349,11 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         observation_variables=observation_variables,
         observation_features=features,
         reward_fn=reward_fn,
-        context_keys=("target_altitude_ft", "target_heading_deg"),
+        context_keys=(
+            "target_altitude_ft",
+            "target_heading_deg",
+            "target_airspeed_kts",
+        ),
         aircraft=p.aircraft,
         agent_hz=p.agent_hz,
     )

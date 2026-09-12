@@ -378,16 +378,27 @@ def test_moving_every_control_by_the_scale_costs_the_whole_weight():
     assert _moved(scenario, moves) == pytest.approx(0.8)
 
 
-def test_control_movement_is_averaged_over_four_axes_including_throttle():
-    """Four separate assertions in one: a sum instead of a mean quadruples each
-    cost, and dropping throttle from the mean makes its row score 1.0."""
+def test_control_movement_is_averaged_over_the_three_aerodynamic_axes():
+    """Three separate assertions in one: a sum instead of a mean triples each
+    cost, and adding a fourth axis to the mean moves every row off 1/3."""
     scenario = make_steady_flight_scenario(
         SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
     )
-    for var in (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS):
-        # One axis moving a full scale is a quarter of the mean, so a quarter
-        # of the weight: 1 - 0.2 * 0.25.
-        assert _moved(scenario, {var: 0.1}) == pytest.approx(0.95), var
+    for var in (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS):
+        # One axis moving a full scale is a third of the mean, so a third of
+        # the weight: 1 - 0.2 / 3.
+        assert _moved(scenario, {var: 0.1}) == pytest.approx(1.0 - 0.2 / 3.0), var
+
+
+def test_throttle_movement_is_not_what_the_stillness_term_prices():
+    """A movement penalty is minimized by pegging an axis against a stop, and
+    the throttle has one the aircraft survives sitting on: pricing it paid the
+    agent to hold full power and abandon the airspeed. hold_airspeed prices the
+    throttle instead, by its result rather than its stillness."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+    )
+    assert _moved(scenario, {V.THROTTLE_POS: 1.0}) == pytest.approx(1.0)
 
 
 def test_control_movement_is_priced_on_magnitude_not_direction():

@@ -39,11 +39,16 @@ OBSERVATION_VARIABLES = (
     V.THROTTLE_POS,
 )
 
-CONTROL_POSITIONS = (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS)
-"""What the smoothness term watches: every axis the agent commands.
+CONTROL_POSITIONS = (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS)
+"""What the smoothness term watches: the three aerodynamic axes.
 
-Throttle is in deliberately. It travels its whole range over an episode, so
-excluding it would leave the noisiest axis unpriced.
+Throttle is deliberately out. A movement penalty is minimized by pegging an
+axis against a stop, and the throttle has one the aircraft can survive sitting
+on: with throttle in the mean, two of three seeds held full throttle for most
+of an episode and flew 25 kts fast. The aerodynamic axes have no such refuge,
+which is why the same term behaves on them. hold_airspeed prices the throttle
+instead, and prices it better, because it pays for the resulting speed rather
+than for stillness: movement the aircraft needs stays free.
 """
 
 _BANDS = (
@@ -102,17 +107,9 @@ class SteadyFlightParams:
     heading_jitter_deg: float = 0.0
     """Half-width of the uniform draw around the target heading."""
     hold_airspeed: bool = False
-    """Whether airspeed joins the task: observed, and a fourth share of accuracy.
-
-    One switch rather than a flag plus a weight, so the reward can never price
-    an airspeed the agent cannot see.
-    """
+    """Whether airspeed joins the task: observed, and a fourth share of accuracy."""
     airspeed_band_kts: float = 25.0
-    """Airspeed error at which that share reaches zero, and its bound.
-
-    Unlike the other three bands this one does not terminate, so its share is
-    clamped instead: see reward_fn.
-    """
+    """Airspeed error at which that share reaches zero, and its bound."""
     observe_sideslip: bool = False
     """Whether the agent sees sideslip. Off reproduces the original task."""
     aos_scale_deg: float = 5.0

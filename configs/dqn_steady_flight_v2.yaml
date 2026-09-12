@@ -1,0 +1,42 @@
+# Rung 2: v1 plus the delta the sweep picked. 0.3 is the smallest grid that
+# reaches the return plateau (0.3/0.4/0.5 all land at ~1700-1740, 0% terminated).
+run_name: dqn-steady-flight-v2
+seed: 0
+total_steps: 300000
+device: cpu
+
+env:
+  scenario: steady_flight
+  delta: 0.3
+
+algo:
+  type: dqn
+  hidden_sizes: [256, 256]
+  lr: 0.0005
+  gamma: 0.99
+  n_step: 3
+  buffer_size: 200000
+  warmup_frames: 5000
+  batch_size: 128
+  target_sync_interval: 1000
+  updates_per_iter: 8
+  epsilon_start: 1.0
+  epsilon_final: 0.02
+  epsilon_decay_frames: 100000
+
+rollout:
+  engine: local
+  n_workers: 1
+  envs_per_worker: 8
+  frames_per_iter: 256
+
+tracking:
+  enabled: true
+  experiment: reinforced-autopilot
+
+checkpoint:
+  dir: runs/dqn-steady-flight/v2
+  interval_iters: 50
+  eval_interval_iters: 50
+  eval_episodes: 5
+  include_buffer: false

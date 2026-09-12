@@ -200,6 +200,12 @@ trained agents stay portable across simulators.
 | Rudder | + for Yaw Right |
 | Throttle | [0, 1] |
 
+Attitude angles (roll, pitch, yaw) are measured against the local NED frame, so `HEADING`
+is true heading, never magnetic. The body rates (`ROLL_RATE` p, `PITCH_RATE` q, `YAW_RATE`
+r) are angular rates about the aircraft's own axes, which is not the same as the rate of
+change of the matching angle: in a bank, most of the heading change comes from q rather
+than r.
+
 ## Aircraft
 
 `Scenario.aircraft` is a JSBSim model name. Everything else `aero_gym` needs to know about an

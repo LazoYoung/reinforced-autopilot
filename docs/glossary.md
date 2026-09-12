@@ -75,6 +75,16 @@ defined once in `variables.py` (+elevator = pitch up, +aileron = roll right,
 +rudder = yaw right; degrees, deg/s, feet, fpm). This is a hard contract, not a
 convention: a trained agent is only portable across backends because of it.
 
+**Euler angles** (roll φ, pitch θ, yaw ψ) — the aircraft's attitude relative to the
+local NED frame. `HEADING` is ψ, so it is always *true* heading; no backend here
+models magnetic variation.
+
+**body rates** (p, q, r) — angular rates about the aircraft's own x, y and z axes
+(`ROLL_RATE`, `PITCH_RATE`, `YAW_RATE`). These are **not** the derivatives of the
+matching Euler angles, because the two triads are about different axes:
+ψ̇ = (q·sin φ + r·cos φ) / cos θ. In a steep bank most of the heading change comes
+from q, not r, and the relation is singular at θ = ±90°.
+
 **profile** — aircraft-specific knowledge (FlightGear's name for the aircraft, its
 cruise condition, startup properties, cockpit needs), keyed on the **JSBSim model
 name**. One `PROFILES` entry per aircraft, in one file.
@@ -207,3 +217,4 @@ Words that already mean something else nearby. Prefer the qualified form.
 | **environment** | one Gymnasium env instance | the `aero_gym` package as a layer | Say **env** for the instance, **environment layer** for the package. |
 | **transition** | `aero_train`'s `(obs, action, reward, next_obs, terminated)` | `aero_gym.scenario.Transition` (`prev_obs`, `obs`, `action`), reward-fn input only | Qualify as **scenario transition** for the latter. |
 | **reset** | Gymnasium `env.reset()` | JSBSim re-trim, the expensive part of it | Note that a reset is *not* cheap here — it re-trims the aircraft, which is why it stalls a lockstep batch. |
+| **yaw rate** | body `r` (`YAW_RATE`), about the body z-axis | ψ̇, the rate at which heading changes | They are equal only wings-level. Say **body yaw rate** or **r** for the observation, **heading rate** for ψ̇. The same trap applies to p and φ̇. |

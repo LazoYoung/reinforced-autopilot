@@ -35,6 +35,7 @@ class FlightVariable(enum.Enum):
     HEADING = "heading"
     ALTITUDE = "altitude"
     VERTICAL_SPEED = "vertical_speed"
+    AIRSPEED = "airspeed"
     PITCH = "pitch"
     ROLL = "roll"
     PITCH_RATE = "pitch_rate"
@@ -63,6 +64,9 @@ OBSERVATION_SPECS: dict[FlightVariable, VariableSpec] = {
     ),
     FlightVariable.ALTITUDE: VariableSpec("ft", -1500.0, 85000.0, "altitude above mean sea level"),
     FlightVariable.VERTICAL_SPEED: VariableSpec("fpm", -40000.0, 40000.0, "climb rate, + = up"),
+    FlightVariable.AIRSPEED: VariableSpec(
+        "kt", 0.0, 1000.0, "calibrated airspeed, what the airspeed indicator reads"
+    ),
     FlightVariable.PITCH: VariableSpec("deg", -90.0, 90.0, "pitch attitude, + = nose up"),
     FlightVariable.ROLL: VariableSpec("deg", -180.0, 180.0, "bank angle, + = right wing down"),
     FlightVariable.PITCH_RATE: VariableSpec("deg/s", -360.0, 360.0, "angular rate about the body y-axis (q)"),

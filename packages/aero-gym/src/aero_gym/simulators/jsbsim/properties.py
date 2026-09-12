@@ -49,6 +49,9 @@ OBSERVATION_MAP: dict[FlightVariable, ObservationMapping] = {
     FlightVariable.HEADING: ObservationMapping("attitude/psi-deg", _wrap_360),
     FlightVariable.ALTITUDE: ObservationMapping("position/h-sl-ft", _identity),
     FlightVariable.VERTICAL_SPEED: ObservationMapping("velocities/h-dot-fps", _fps_to_fpm),
+    # Calibrated, not true or ground speed: stall, control feel and the limit
+    # speeds all track what the pilot's instrument reads, so it ports cleanly.
+    FlightVariable.AIRSPEED: ObservationMapping("velocities/vc-kts", _identity),
     FlightVariable.PITCH: ObservationMapping("attitude/theta-deg", _identity),
     FlightVariable.ROLL: ObservationMapping("attitude/phi-deg", _identity),
     FlightVariable.PITCH_RATE: ObservationMapping("velocities/q-rad_sec", _rad_s_to_deg_s),

@@ -15,7 +15,7 @@ from conftest import constant_reward
 
 def test_variable_registry_is_complete():
     assert set(ALL_ACTION_VARIABLES) == {V.ELEVATOR, V.AILERON, V.RUDDER, V.THROTTLE}
-    assert len(ALL_OBSERVATION_VARIABLES) == 15
+    assert len(ALL_OBSERVATION_VARIABLES) == 14
     for spec in list(ACTION_SPECS.values()) + list(OBSERVATION_SPECS.values()):
         assert spec.low < spec.high
 

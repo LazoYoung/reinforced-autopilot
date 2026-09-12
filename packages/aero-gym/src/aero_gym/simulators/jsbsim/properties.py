@@ -51,7 +51,6 @@ OBSERVATION_MAP: dict[FlightVariable, ObservationMapping] = {
     FlightVariable.VERTICAL_SPEED: ObservationMapping("velocities/h-dot-fps", _fps_to_fpm),
     FlightVariable.PITCH: ObservationMapping("attitude/theta-deg", _identity),
     FlightVariable.ROLL: ObservationMapping("attitude/phi-deg", _identity),
-    FlightVariable.YAW: ObservationMapping("attitude/psi-deg", _wrap_360),
     FlightVariable.PITCH_RATE: ObservationMapping("velocities/q-rad_sec", _rad_s_to_deg_s),
     FlightVariable.ROLL_RATE: ObservationMapping("velocities/p-rad_sec", _rad_s_to_deg_s),
     FlightVariable.YAW_RATE: ObservationMapping("velocities/r-rad_sec", _rad_s_to_deg_s),

@@ -37,7 +37,6 @@ class FlightVariable(enum.Enum):
     VERTICAL_SPEED = "vertical_speed"
     PITCH = "pitch"
     ROLL = "roll"
-    YAW = "yaw"
     PITCH_RATE = "pitch_rate"
     ROLL_RATE = "roll_rate"
     YAW_RATE = "yaw_rate"
@@ -59,12 +58,13 @@ ACTION_SPECS: dict[FlightVariable, VariableSpec] = {
 }
 
 OBSERVATION_SPECS: dict[FlightVariable, VariableSpec] = {
-    FlightVariable.HEADING: VariableSpec("deg", 0.0, 360.0, "true heading"),
+    FlightVariable.HEADING: VariableSpec(
+        "deg", 0.0, 360.0, "true heading of the nose (yaw angle psi), not magnetic or ground track"
+    ),
     FlightVariable.ALTITUDE: VariableSpec("ft", -1500.0, 85000.0, "altitude above mean sea level"),
     FlightVariable.VERTICAL_SPEED: VariableSpec("fpm", -40000.0, 40000.0, "climb rate, + = up"),
     FlightVariable.PITCH: VariableSpec("deg", -90.0, 90.0, "pitch attitude, + = nose up"),
     FlightVariable.ROLL: VariableSpec("deg", -180.0, 180.0, "bank angle, + = right wing down"),
-    FlightVariable.YAW: VariableSpec("deg", 0.0, 360.0, "yaw (true heading of the body x-axis)"),
     FlightVariable.PITCH_RATE: VariableSpec("deg/s", -360.0, 360.0, "body pitch rate q"),
     FlightVariable.ROLL_RATE: VariableSpec("deg/s", -720.0, 720.0, "body roll rate p"),
     FlightVariable.YAW_RATE: VariableSpec("deg/s", -360.0, 360.0, "body yaw rate r"),

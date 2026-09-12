@@ -1,5 +1,5 @@
-# Rung 1 of the steady-flight ladder: the original task, unchanged.
-# Every later rung adds exactly one change, so each is read against the last.
+# Rung 1 of the steady-flight ladder: the task with airspeed made visible.
+# The agent commands the throttle, so it must see what the throttle controls.
 run_name: dqn-steady-flight-v1
 seed: 0
 total_steps: 300000
@@ -7,6 +7,9 @@ device: cpu
 
 env:
   scenario: steady_flight
+  delta: 0.1
+  params:
+    hold_airspeed: true
 
 algo:
   type: dqn

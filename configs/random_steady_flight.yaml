@@ -12,6 +12,9 @@ device: cpu
 
 env:
   scenario: steady_flight
+  delta: 0.1
+  params:
+    hold_airspeed: true
 
 algo:
   type: random

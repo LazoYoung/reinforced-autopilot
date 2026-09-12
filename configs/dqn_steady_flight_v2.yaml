@@ -1,5 +1,5 @@
-# Rung 2: v1 plus the delta the sweep picked. 0.3 is the smallest grid that
-# reaches the return plateau (0.3/0.4/0.5 all land at ~1700-1740, 0% terminated).
+# Rung 2: v1 plus sideslip, observed and priced together.
+# Observing without pricing was measured and made the slip three times worse.
 run_name: dqn-steady-flight-v2
 seed: 0
 total_steps: 300000
@@ -7,7 +7,11 @@ device: cpu
 
 env:
   scenario: steady_flight
-  delta: 0.3
+  delta: 0.1
+  params:
+    hold_airspeed: true
+    observe_sideslip: true
+    coordination_weight: 0.2
 
 algo:
   type: dqn

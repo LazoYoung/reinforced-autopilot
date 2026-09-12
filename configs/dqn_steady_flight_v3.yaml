@@ -1,5 +1,5 @@
-# Rung 3: v2 plus sideslip observed and priced. The policy holds a permanent
-# cross-controlled slip worth ~9 kt of cruise; nothing in v1/v2 charges it.
+# Rung 3: v2 plus the control-stillness term, the one aimed at the jiggle.
+# control_rate_scale tracks env.delta: a full increment on every axis costs the weight.
 run_name: dqn-steady-flight-v3
 seed: 0
 total_steps: 300000
@@ -7,10 +7,13 @@ device: cpu
 
 env:
   scenario: steady_flight
-  delta: 0.3
+  delta: 0.1
   params:
+    hold_airspeed: true
     observe_sideslip: true
     coordination_weight: 0.2
+    smoothness_weight: 0.2
+    control_rate_scale: 0.1
 
 algo:
   type: dqn

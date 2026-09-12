@@ -15,6 +15,7 @@ env:
   delta: 0.1
   params:
     hold_airspeed: true
+    airspeed_jitter_kts: 10.0
 
 algo:
   type: random

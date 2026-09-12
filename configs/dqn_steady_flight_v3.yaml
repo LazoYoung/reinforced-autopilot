@@ -10,6 +10,7 @@ env:
   delta: 0.1
   params:
     hold_airspeed: true
+    airspeed_jitter_kts: 10.0
     observe_sideslip: true
     coordination_weight: 0.2
     smoothness_weight: 0.2

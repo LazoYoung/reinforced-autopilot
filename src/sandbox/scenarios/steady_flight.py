@@ -66,7 +66,7 @@ _LIMITS = (
 )
 _SCALES = ("aos_scale_deg", "control_rate_scale")
 _WEIGHTS = ("coordination_weight", "smoothness_weight")
-_JITTERS = ("altitude_jitter_ft", "heading_jitter_deg")
+_JITTERS = ("altitude_jitter_ft", "heading_jitter_deg", "airspeed_jitter_kts")
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,13 @@ class SteadyFlightParams:
     """Half-width of the uniform draw around the target altitude."""
     heading_jitter_deg: float = 0.0
     """Half-width of the uniform draw around the target heading."""
+    airspeed_jitter_kts: float = 0.0
+    """Half-width of the uniform draw around the target airspeed.
+
+    Unlike the other two this one changes the trim the episode needs, not just
+    where it starts: a different speed wants a different elevator and throttle,
+    so the agent cannot memorize one lever position and pass.
+    """
     hold_airspeed: bool = False
     """Whether airspeed joins the task: observed, and a fourth share of accuracy."""
     airspeed_band_kts: float = 25.0
@@ -189,11 +196,12 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         profile.cruise_airspeed_kts if p.airspeed_kts is None else p.airspeed_kts
     )
     base_heading_deg = p.heading_deg % 360.0
+    base_airspeed_kts = airspeed_kts
 
     def setup_fn(rng: np.random.Generator) -> EpisodeSetup:
         """Draw one episode's start, with the target following it.
 
-        The two draws are unconditional: at the default jitter of 0.0,
+        All three draws are unconditional: at the default jitter of 0.0,
         uniform(-0.0, 0.0) returns exactly 0.0, so the no-jitter path needs no
         branch and there is no second code path to rot.
         """
@@ -203,6 +211,9 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         heading_deg = (
             base_heading_deg + rng.uniform(-p.heading_jitter_deg, p.heading_jitter_deg)
         ) % 360.0
+        airspeed_kts = base_airspeed_kts + rng.uniform(
+            -p.airspeed_jitter_kts, p.airspeed_jitter_kts
+        )
         return EpisodeSetup(
             InitialConditions(
                 latitude_deg=p.latitude_deg,

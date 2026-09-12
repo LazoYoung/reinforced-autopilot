@@ -68,6 +68,7 @@ def test_zero_jitter_gives_the_same_start_every_episode():
     setups = [scenario.setup_fn(rng) for _ in range(5)]
     assert {s.initial_conditions.altitude_ft for s in setups} == {5000.0}
     assert {s.initial_conditions.heading_deg for s in setups} == {270.0}
+    assert {s.initial_conditions.airspeed_kts for s in setups} == {95.0}
 
 
 def test_jitter_draws_a_different_start_each_episode():
@@ -102,9 +103,47 @@ def test_the_target_follows_the_jittered_start_so_it_stays_a_hold_task():
     assert setup.context["target_altitude_ft"] == setup.initial_conditions.altitude_ft
 
 
+def test_airspeed_jitter_draws_a_different_speed_each_episode():
+    """A constant start speed lets one trim pass every episode, so exploration
+    never has to find the relationship between throttle and speed at all."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(airspeed_jitter_kts=10.0)
+    )
+    rng = np.random.default_rng(0)
+    setups = [scenario.setup_fn(rng) for _ in range(5)]
+    speeds = [s.initial_conditions.airspeed_kts for s in setups]
+    assert len(set(speeds)) == 5
+    assert all(85.0 <= kts <= 105.0 for kts in speeds)
+
+
+def test_the_airspeed_target_follows_the_jittered_start_too():
+    """Against a fixed target this would be a go-to task inside a 25 kt band,
+    and the episode would start already scored for a speed it was handed."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(airspeed_jitter_kts=10.0, hold_airspeed=True)
+    )
+    setup = scenario.setup_fn(np.random.default_rng(0))
+    assert setup.context["target_airspeed_kts"] == setup.initial_conditions.airspeed_kts
+    assert setup.context["target_airspeed_kts"] != 95.0
+
+
+def test_airspeed_jitter_rides_on_the_aircrafts_cruise_not_a_constant():
+    """The 737 cruises at 280 kts; jitter must widen that, not replace it."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(aircraft="737", airspeed_jitter_kts=10.0)
+    )
+    speeds = [
+        scenario.setup_fn(np.random.default_rng(s)).initial_conditions.airspeed_kts
+        for s in range(5)
+    ]
+    assert all(270.0 <= kts <= 290.0 for kts in speeds)
+
+
 def test_a_negative_jitter_is_rejected():
     with pytest.raises(ValueError, match="altitude_jitter_ft"):
         SteadyFlightParams(altitude_jitter_ft=-10.0)
+    with pytest.raises(ValueError, match="airspeed_jitter_kts"):
+        SteadyFlightParams(airspeed_jitter_kts=-1.0)
 
 
 def test_a_non_positive_band_is_rejected():

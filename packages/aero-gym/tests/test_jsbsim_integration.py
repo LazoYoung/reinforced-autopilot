@@ -112,15 +112,11 @@ def test_trimmed_flight_stays_in_the_envelope(env):
     assert info["obs"][V.ALTITUDE] > 4000.0
 
 
-@pytest.mark.filterwarnings(
-    "ignore:observation feature '(pitch_rate)' (saturated at):RuntimeWarning"
-)
 def test_controls_have_canonical_sign(env):
     """Pitch-up elevator command must raise pitch rate, and aileron-right must
     roll right; driving both hard on purpose saturates pitch_rate against
-    this scenario's pinned bound, which is the clip doing its job. The mark
-    names only pitch_rate: a future change that saturates a different
-    feature here should still show up as a warning."""
+    this scenario's pinned bound, which is the clip doing its job and is
+    reported in the end-of-run saturation record."""
     env.reset(seed=0)
     up = np.array([0.5, 0.0, 0.0, 0.7], np.float32)
     for _ in range(5):
@@ -557,10 +553,6 @@ def test_reset_clears_controls_when_the_fdm_is_reused():
         sim.close()
 
 
-@pytest.mark.filterwarnings(
-    "ignore:observation feature '(pitch_rate|vertical_speed|roll)' "
-    "(saturated at):RuntimeWarning"
-)
 def test_two_episodes_from_the_same_seed_start_identically():
     """JSBSim's run_ic() restores the flight condition but not engine state, so
     without discarding the FDM a seeded run is not reproducible past its first
@@ -568,10 +560,8 @@ def test_two_episodes_from_the_same_seed_start_identically():
 
     Episode 1 deliberately flies well away from trim, which saturates
     pitch_rate, vertical_speed and roll against this scenario's pinned
-    bounds; the clip is expected here, not a defect. This file has no
-    heading_error_deg feature, so the mark names only these three: a
-    future change that saturates a fourth feature here should still show
-    up as a warning.
+    bounds; the clip is expected here, not a defect, and the end-of-run
+    saturation record is where it surfaces.
     """
     scenario = _scenario()
     env = AeroGymEnv(scenario, simulator=JSBSimSimulator())

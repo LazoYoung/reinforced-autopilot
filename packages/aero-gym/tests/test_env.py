@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import dataclasses
-import warnings
 
 import numpy as np
 import pytest
 
 from aero_gym import AeroGymEnv
+from aero_gym.saturation import saturation_report
 from aero_gym.scenario import InitialConditions, Scenario, Transition, fixed_setup
 from aero_gym.variables import FlightVariable as V
 from conftest import FakeSimulator
@@ -275,69 +275,72 @@ def _bounded_scenario(low=-100.0, high=100.0):
     )
 
 
-def test_a_saturated_observation_warns_and_names_the_feature(fake_simulator):
+def _saturate(env, fake_simulator, value, steps=1):
+    """Drive one feature out of bounds for `steps` agent steps."""
+    env.reset(seed=0)
+    fake_simulator.state[V.ROLL] = value
+    for _ in range(steps):
+        env.step(np.zeros(env.action_space.shape, np.float32))
+
+
+def test_a_saturated_observation_is_recorded_with_the_feature_and_the_peak(fake_simulator):
     """np.clip makes an out-of-range feature look in-range, which is a silently
-    mis-scaled input rather than a crash."""
+    mis-scaled input rather than a crash. The peak is what the record keeps,
+    because it is the number that says where the bound should have been."""
+    env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
+    _saturate(env, fake_simulator, 250.0)
+    (entry,) = saturation_report()
+    assert (entry.scenario, entry.feature) == ("bounded", "roll")
+    assert entry.peak == 250.0
+    assert entry.overshoot == pytest.approx(150.0)
+
+
+def test_the_clipped_value_is_what_the_agent_actually_sees(fake_simulator):
+    """Recording must not change the observation: the Box is still the contract."""
     env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
     env.reset(seed=0)
     fake_simulator.state[V.ROLL] = 250.0
-    with pytest.warns(RuntimeWarning, match=r"'roll'.*250"):
-        obs, *_ = env.step(np.zeros(env.action_space.shape, np.float32))
+    obs, *_ = env.step(np.zeros(env.action_space.shape, np.float32))
     assert obs[0] == pytest.approx(100.0)
 
 
-def test_a_saturated_observation_below_the_low_bound_also_warns(fake_simulator):
+def test_a_low_side_excursion_is_recorded_too(fake_simulator):
     """The compare in _to_array is direction-symmetric; this mirrors the
-    over-high case above so the low side of the clip is covered too."""
+    over-high case so the low side of the clip is covered as well."""
     env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
-    env.reset(seed=0)
-    fake_simulator.state[V.ROLL] = -250.0
-    with pytest.warns(RuntimeWarning, match=r"'roll'.*-250"):
-        obs, *_ = env.step(np.zeros(env.action_space.shape, np.float32))
-    assert obs[0] == pytest.approx(-100.0)
+    _saturate(env, fake_simulator, -250.0)
+    (entry,) = saturation_report()
+    assert entry.peak == -250.0
+    assert entry.overshoot == pytest.approx(150.0)
 
 
-def test_the_saturation_warning_fires_once_per_feature_not_once_per_step(fake_simulator):
-    """At 10 Hz an excursion would otherwise emit a warning every 100 ms for
-    the rest of the run, which is how a useful warning becomes noise.
-
-    recwarn cannot tell this apart from a code path that warns on every
-    step: pytest applies its own "default" filter ahead of recwarn's, which
-    dedups by (message, category, lineno) regardless of our own guard, since
-    every step() call here comes from the same source line with the same
-    message. simplefilter("always") in an explicit context bypasses that.
+def test_many_environments_over_many_steps_make_one_entry(fake_simulator):
+    """The regression this record exists for. A run builds one environment per
+    vector sub-env plus a fresh one per evaluation, and the old guard lived on
+    the instance, so a single tight bound reported once per environment: 29
+    lines from a 3000 step run. Keyed on the scenario, it is one line.
     """
+    for _ in range(3):
+        sim = type(fake_simulator)()
+        env = AeroGymEnv(_bounded_scenario(), simulator=sim)
+        _saturate(env, sim, 250.0, steps=5)
+    report = saturation_report()
+    assert len(report) == 1
+    assert report[0].steps == 15
+
+
+def test_an_in_bounds_observation_is_not_recorded(fake_simulator):
+    """The other half: a record that always fills proves nothing."""
     env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
-    env.reset(seed=0)
-    fake_simulator.state[V.ROLL] = 250.0
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        for _ in range(5):
-            env.step(np.zeros(env.action_space.shape, np.float32))
-    assert len([w for w in caught if issubclass(w.category, RuntimeWarning)]) == 1
+    _saturate(env, fake_simulator, 12.0, steps=5)
+    assert saturation_report() == ()
 
 
-def test_an_in_bounds_observation_stays_silent(fake_simulator):
-    """The other half: a warning that always fires proves nothing.
-
-    Same explicit "always" filter as the sibling test, so this stays a fair
-    comparison rather than one relying on pytest's own dedup to look silent.
-    """
-    env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
-    env.reset(seed=0)
-    fake_simulator.state[V.ROLL] = 12.0
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        for _ in range(5):
-            env.step(np.zeros(env.action_space.shape, np.float32))
-    assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == []
-
-
-def test_a_nan_feature_is_reported_as_nan_not_as_saturation(fake_simulator):
+def test_a_nan_feature_is_recorded_as_nan_not_as_saturation(fake_simulator):
     """NaN trips the same comparison, since NaN != NaN, and calling it
     saturation would send the reader looking for an excursion that never was."""
     env = AeroGymEnv(_bounded_scenario(), simulator=fake_simulator)
-    env.reset(seed=0)
-    fake_simulator.state[V.ROLL] = float("nan")
-    with pytest.warns(RuntimeWarning, match=r"'roll'.*NaN"):
-        env.step(np.zeros(env.action_space.shape, np.float32))
+    _saturate(env, fake_simulator, float("nan"))
+    (entry,) = saturation_report()
+    assert entry.nans == 1
+    assert entry.overshoot == 0.0

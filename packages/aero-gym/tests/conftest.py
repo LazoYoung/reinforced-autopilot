@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from aero_gym.saturation import reset_saturation
 from aero_gym.scenario import InitialConditions, Scenario, Transition, fixed_setup
 from aero_gym.simulator import Simulator
 from aero_gym.variables import FlightVariable as V
@@ -83,3 +84,12 @@ def scenario(initial_conditions: InitialConditions) -> Scenario:
 @pytest.fixture
 def fake_simulator() -> FakeSimulator:
     return FakeSimulator()
+
+
+@pytest.fixture(autouse=True)
+def _forget_saturations():
+    """The saturation record is process-wide by design, so a test asserting on
+    it would otherwise see whatever an earlier test left behind."""
+    reset_saturation()
+    yield
+    reset_saturation()

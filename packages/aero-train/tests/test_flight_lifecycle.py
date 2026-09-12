@@ -43,10 +43,6 @@ def _assert_eval_report_printed(out: str) -> None:
     assert "terminated" in out
 
 
-@pytest.mark.filterwarnings(
-    "ignore:observation feature '(vertical_speed|heading_error_deg)' "
-    "(saturated at):RuntimeWarning"
-)
 def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
     """Under this config, no field the checkpoint carries distinguishes a
     real resume from a restart. Measured, not assumed: cli._train(cfg_1024,
@@ -60,9 +56,8 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
 
     DQN's exploratory early actions fly steady_flight well outside its pinned
     bounds vertical_speed and heading_error_deg (checked deterministic under
-    this config's seed=0/cpu by running twice); that saturation is expected.
-    The mark names exactly those two: a future change that saturates a third
-    feature here should still show up as a warning.
+    this config's seed=0/cpu by running twice); that saturation is expected,
+    and the end-of-run record is where it surfaces.
     """
     config = dict(CONFIG)
     config["checkpoint"] = {
@@ -91,15 +86,10 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
     _assert_eval_report_printed(capsys.readouterr().out)
 
 
-@pytest.mark.filterwarnings(
-    "ignore:observation feature '(vertical_speed|heading_error_deg)' "
-    "(saturated at):RuntimeWarning"
-)
 def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path, capsys):
     """DQN's exploratory early actions fly steady_flight well outside its
-    pinned bounds vertical_speed and heading_error_deg; expected saturation.
-    The mark names exactly those two: a third feature saturating here should
-    still show up as a warning."""
+    pinned bounds vertical_speed and heading_error_deg; expected saturation,
+    recorded for the end-of-run summary rather than warned about per step."""
     config = dict(CONFIG)
     config["checkpoint"] = {
         "dir": str(tmp_path / "checkpoints"),

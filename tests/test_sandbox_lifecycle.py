@@ -144,10 +144,6 @@ def test_experience_source_spawns_one_independent_stream_per_sub_env():
     assert all(4800.0 <= t <= 5200.0 for t in first)
 
 
-@pytest.mark.filterwarnings(
-    "ignore:observation feature '(vertical_speed|heading_error_deg|roll)' "
-    "(saturated at):RuntimeWarning"
-)
 def test_a_jittered_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys):
     """Under this config, no field this checkpoint carries distinguishes a
     resume from a restart, measured rather than assumed: cmd_resume reseeds
@@ -190,10 +186,6 @@ def test_a_jittered_run_survives_start_checkpoint_resume_and_eval(tmp_path, caps
     assert "mean return" in out and "length" in out and "terminated" in out
 
 
-@pytest.mark.filterwarnings(
-    "ignore:observation feature '(vertical_speed|heading_error_deg|roll)' "
-    "(saturated at):RuntimeWarning"
-)
 def test_two_runs_of_the_same_jittered_config_are_bit_identical(tmp_path, capsys):
     """The sampler draws from the env's own generator and adds no other source
     of randomness, so seeding a run still pins it completely. Compared on
@@ -218,10 +210,6 @@ def test_two_runs_of_the_same_jittered_config_are_bit_identical(tmp_path, capsys
     assert np.isfinite(results[0][2])
 
 
-@pytest.mark.filterwarnings(
-    "ignore:observation feature '(vertical_speed|heading_error_deg|roll)' "
-    "(saturated at):RuntimeWarning"
-)
 def test_the_best_checkpoint_reloads_through_the_same_path_eval_uses(tmp_path, capsys):
     path = _config(tmp_path, interval_iters=2, eval_interval_iters=2, eval_episodes=1)
     assert cli.main(["train", str(path)]) == 0

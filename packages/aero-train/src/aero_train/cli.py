@@ -14,7 +14,7 @@ import gymnasium as gym
 from .algo import build_algorithm
 from .checkpoint import CheckpointManager, load_checkpoint
 from .config import TrainConfig, config_from_dict, load_config
-from .envs import make_env_fn
+from .envs import make_env_fn, observation_saturation_report
 from .rollout import build_engine
 from .tracking import build_tracker
 from .trainer import Trainer, evaluate_policy
@@ -57,7 +57,21 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
     trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=eval_env_fn)
     trainer.frames = frames
     trainer.run()
+    _report_saturation()
     return 0
+
+
+def _report_saturation() -> None:
+    """Print the run's observation-bound excursions, once, at the end.
+
+    Reported here rather than warned about as they happen: a run builds one
+    environment per vector sub-env plus one per evaluation, so a single tight
+    bound used to print once per environment, and the peak matters more than
+    the first sighting anyway.
+    """
+    report = observation_saturation_report()
+    if report:
+        print(report, file=sys.stderr)
 
 
 def cmd_train(args: argparse.Namespace) -> int:
@@ -98,6 +112,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         f"length {report.mean_length:.1f}, return/step {report.return_per_step:.3f}, "
         f"terminated {report.terminated_frac:.0%}"
     )
+    _report_saturation()
     return 0
 
 

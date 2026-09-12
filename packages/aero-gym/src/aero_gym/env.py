@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import math
 import time
-import warnings
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
 
+from .saturation import record_saturation
 from .scenario import Observation, Scenario, Transition
 from .simulator import Simulator
 from .variables import ACTION_SPECS, FlightVariable
@@ -48,7 +47,6 @@ class AeroGymEnv(gym.Env):
         self._visualization_started = False
         self._next_frame_deadline: float | None = None
         self._context: dict[str, float] = {}
-        self._warned_features: set[int] = set()
 
         act_low = np.array([ACTION_SPECS[v].low for v in scenario.action_variables], np.float32)
         act_high = np.array([ACTION_SPECS[v].high for v in scenario.action_variables], np.float32)
@@ -158,35 +156,18 @@ class AeroGymEnv(gym.Env):
             np.float32,
         )
         clipped = np.clip(values, self.observation_space.low, self.observation_space.high)
-        # One vectorized comparison against a 0.04 ms step, and it turns a
-        # silently mis-scaled observation into a visible line.
+        # One vectorized comparison against a 0.04 ms step. NaN trips it too,
+        # since NaN never equals itself, and is recorded as its own kind.
         for index in np.flatnonzero(clipped != values):
-            self._warn_out_of_bounds(int(index), float(values[index]))
+            feature = self.scenario.observation_features[index]
+            record_saturation(
+                self.scenario.name,
+                feature.name,
+                feature.spec.low,
+                feature.spec.high,
+                float(values[index]),
+            )
         return clipped
-
-    def _warn_out_of_bounds(self, index: int, value: float) -> None:
-        """Warn once per feature, for the life of this environment.
-
-        Not reset per episode: an excursion at 10 Hz would otherwise emit a
-        warning every 100 ms for the rest of the run. NaN trips the same
-        comparison as a clip does, since NaN never equals itself, so the two
-        cases are named apart here rather than both reading as saturation.
-        """
-        if index in self._warned_features:
-            return
-        self._warned_features.add(index)
-        feature = self.scenario.observation_features[index]
-        problem = (
-            "is NaN" if math.isnan(value) else f"saturated at {value}"
-        )
-        warnings.warn(
-            f"observation feature {feature.name!r} {problem}, outside its "
-            f"declared bounds [{feature.spec.low}, {feature.spec.high}]; the "
-            "value the agent sees has been clipped. Widen the bound in the "
-            "scenario or fix the feature.",
-            RuntimeWarning,
-            stacklevel=4,
-        )
 
     def _pace_real_time(self) -> None:
         """Sleep so simulated time tracks wall-clock time for the viewer."""

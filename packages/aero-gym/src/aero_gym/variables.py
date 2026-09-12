@@ -67,7 +67,7 @@ OBSERVATION_SPECS: dict[FlightVariable, VariableSpec] = {
     FlightVariable.ROLL: VariableSpec("deg", -180.0, 180.0, "bank angle, + = right wing down"),
     FlightVariable.PITCH_RATE: VariableSpec("deg/s", -360.0, 360.0, "body pitch rate q"),
     FlightVariable.ROLL_RATE: VariableSpec("deg/s", -720.0, 720.0, "body roll rate p"),
-    FlightVariable.YAW_RATE: VariableSpec("deg/s", -360.0, 360.0, "body yaw rate r"),
+    FlightVariable.YAW_RATE: VariableSpec("deg/s", -360.0, 360.0, "angular rate about the body z-axis (r)"),
     FlightVariable.AOA: VariableSpec("deg", -90.0, 90.0, "angle of attack (alpha)"),
     FlightVariable.AOS: VariableSpec("deg", -90.0, 90.0, "angle of sideslip (beta)"),
     FlightVariable.ELEVATOR_POS: VariableSpec("norm", -1.0, 1.0, "elevator deflection, + = pitch up"),

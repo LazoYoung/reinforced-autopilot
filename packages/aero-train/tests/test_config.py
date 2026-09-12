@@ -275,25 +275,40 @@ def test_flightgear_needs_exactly_one_environment_in_total():
     assert cfg.env.render_mode == "flightgear"
 
 
+# A ladder rung exists to change exactly these two: the action grid, and the
+# scenario knobs. Anything else differing makes the rungs uncomparable.
+LADDER_FIELDS = ("delta", "params")
+
+
 def test_every_steady_flight_config_flies_the_identical_task():
     """The steady-flight configs exist to be compared against each other; a
-    baseline flown on a different env or a different rollout topology would not
-    be a baseline. Parsing them is not enough to show that: this compares the
-    actual env: and rollout: dataclasses field by field, so a config drifting
-    out of sync fails here instead of silently producing an uncomparable curve
-    in MLflow.
+    rung flown on a different scenario, episode length or rollout topology
+    would not be comparable. Parsing them is not enough to show that: this
+    compares the actual env: and rollout: dataclasses field by field, so a
+    config drifting out of sync fails here instead of silently producing an
+    uncomparable curve in MLflow.
 
-    Globbed rather than named, so a second DQN variant (dqn_steady_flight_v2
-    beside dqn_steady_flight_v1) is held to the same bar the day it lands.
+    Globbed rather than named, so a new rung is held to the same bar the day it
+    lands. v1 is the baseline the two non-learning baselines must match exactly,
+    including delta and params: it is the rung they were measured against.
     """
     dqns = sorted(CONFIGS_DIR.glob("dqn_steady_flight*.yaml"))
     assert dqns, "no DQN steady-flight config found; this test pins nothing"
     random_ = load_config(CONFIGS_DIR / "random_steady_flight.yaml")
     constant = load_config(CONFIGS_DIR / "constant_steady_flight.yaml")
 
-    dqn = load_config(dqns[0])
+    dqn = load_config(CONFIGS_DIR / "dqn_steady_flight_v1.yaml")
+    shared = {
+        k: v for k, v in dataclasses.asdict(dqn.env).items() if k not in LADDER_FIELDS
+    }
     for path in dqns:
-        assert dataclasses.asdict(load_config(path).env) == dataclasses.asdict(dqn.env)
+        rung = load_config(path)
+        assert {
+            k: v
+            for k, v in dataclasses.asdict(rung.env).items()
+            if k not in LADDER_FIELDS
+        } == shared, path.name
+        assert dataclasses.asdict(rung.rollout) == dataclasses.asdict(dqn.rollout), path.name
     for other in (random_, constant):
         assert dataclasses.asdict(dqn.env) == dataclasses.asdict(other.env)
         assert dataclasses.asdict(dqn.rollout) == dataclasses.asdict(other.rollout)

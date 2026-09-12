@@ -2,7 +2,7 @@
 # control_rate_scale tracks env.delta: a full increment on every axis costs the weight.
 run_name: dqn-steady-flight-v3
 seed: 0
-total_steps: 300000
+total_steps: 1000000
 device: cpu
 
 env:

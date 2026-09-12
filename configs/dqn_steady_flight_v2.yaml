@@ -2,7 +2,7 @@
 # Observing without pricing was measured and made the slip three times worse.
 run_name: dqn-steady-flight-v2
 seed: 0
-total_steps: 300000
+total_steps: 1000000
 device: cpu
 
 env:

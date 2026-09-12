@@ -3,11 +3,11 @@
 # purpose -- a baseline flown on a different task is not a baseline, and this
 # is what makes its logged metrics a fair comparison against the DQN run.
 # total_steps matches it for the same reason: the baselines take no gradient
-# steps, so the extra frames cost ~30 s, and curves that stop at different x
+# steps, so the extra frames cost ~2 min, and curves that stop at different x
 # are awkward to read against each other in MLflow.
 run_name: random-steady-flight
 seed: 0
-total_steps: 300000
+total_steps: 1000000
 device: cpu
 
 env:

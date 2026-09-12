@@ -2,7 +2,7 @@
 # The agent commands the throttle, so it must see what the throttle controls.
 run_name: dqn-steady-flight-v1
 seed: 0
-total_steps: 300000
+total_steps: 1000000
 device: cpu
 
 env:

@@ -1,7 +1,4 @@
-# Hold altitude and heading in a c172p. The hyperparameters below are a
-# starting point, not a tuned result -- no number here has been shown to be
-# better than its neighbours.
-run_name: dqn-steady-flight
+run_name: dqn-steady-flight-v1
 seed: 0
 total_steps: 300000
 device: cpu
@@ -35,7 +32,7 @@ tracking:
   experiment: reinforced-autopilot
 
 checkpoint:
-  dir: runs/dqn-steady-flight/checkpoints
+  dir: runs/dqn-steady-flight/v1
   interval_iters: 50
   eval_interval_iters: 50
   eval_episodes: 5

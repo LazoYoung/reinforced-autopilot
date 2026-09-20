@@ -76,7 +76,8 @@ uv run examples/run_random_agent.py --aircraft 737   # fly a different type
 ## The training stack
 
 A run config is YAML loaded into frozen dataclasses, so a misspelled key fails at load time.
-See [`configs/dqn_cartpole.yaml`](configs/dqn_cartpole.yaml) for a complete example.
+See [`configs/dqn_cartpole.yaml`](configs/dqn_cartpole.yaml) for a complete example, and
+[`docs/training-design.md`](docs/training-design.md) for why the stack is shaped this way.
 
 ```yaml
 run_name: dqn-cartpole

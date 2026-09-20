@@ -35,6 +35,9 @@ def test_scenario_defaults(scenario):
         {"observation_variables": (V.ELEVATOR,)},
         {"action_variables": (V.AILERON, V.AILERON)},
         {"agent_hz": 0.0},
+        {"action_delta": (0.1, 0.1, 0.1)},
+        {"action_delta": (0.1, 0.1, 0.1, 0.0)},
+        {"action_delta": (0.1, 0.1, 0.1, 1.5)},
     ],
 )
 def test_scenario_validation(initial_conditions, kwargs):
@@ -45,6 +48,19 @@ def test_scenario_validation(initial_conditions, kwargs):
             reward_fn=constant_reward,
             **kwargs,
         )
+
+
+def test_action_delta_defaults_to_continuous_and_is_kept_as_a_tuple(initial_conditions):
+    """None is the continuous default; a list is frozen to a tuple, since a
+    mutable sequence on a frozen dataclass could still change underneath it."""
+    base = dict(name="d", setup_fn=fixed_setup(initial_conditions), reward_fn=constant_reward)
+    assert Scenario(**base).action_delta is None
+    assert Scenario(**base, action_delta=[0.1, 0.2, 0.3, 0.4]).action_delta == (
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+    )
 
 
 def test_features_default_to_a_passthrough_over_the_observed_variables(initial_conditions):

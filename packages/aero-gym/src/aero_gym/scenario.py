@@ -171,6 +171,10 @@ class Scenario:
     aircraft: str = "c172p"
     agent_hz: float = 10.0
     max_episode_steps: int | None = 2000
+    action_delta: tuple[float, ...] | None = None
+    """Per-axis action step as a fraction of each action variable's declared
+    range, positional against action_variables. None poses the task for
+    continuous actions, and the training side applies no stepping wrapper."""
 
     def __post_init__(self) -> None:
         if not self.action_variables:
@@ -189,6 +193,20 @@ class Scenario:
             raise ValueError("duplicate observation variables")
         if self.agent_hz <= 0:
             raise ValueError("agent_hz must be positive")
+        if self.action_delta is not None:
+            object.__setattr__(
+                self, "action_delta", tuple(float(s) for s in self.action_delta)
+            )
+            if len(self.action_delta) != len(self.action_variables):
+                raise ValueError(
+                    f"action_delta has {len(self.action_delta)} entries for "
+                    f"{len(self.action_variables)} action variables"
+                )
+            for var, step in zip(self.action_variables, self.action_delta):
+                if not 0.0 < step <= 1.0:
+                    raise ValueError(
+                        f"action_delta for {var.value} must be in (0, 1], got {step}"
+                    )
         if not self.observation_features:
             # Default: the observed variables, in order, at canonical bounds.
             # Filled here so AeroGymEnv only ever reads observation_features.

@@ -1203,6 +1203,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aero-gym" },
     { name = "aero-train" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -1215,6 +1216,7 @@ dev = [
 requires-dist = [
     { name = "aero-gym", editable = "packages/aero-gym" },
     { name = "aero-train", editable = "packages/aero-train" },
+    { name = "pydantic", specifier = ">=2.13.5" },
 ]
 
 [package.metadata.requires-dev]

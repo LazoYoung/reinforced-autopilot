@@ -508,12 +508,20 @@ def test_a_delta_that_misnames_an_axis_is_rejected():
 
 
 def test_a_delta_outside_the_unit_interval_is_rejected():
-    with pytest.raises(ValueError, match=r"\(0, 1\]"):
+    with pytest.raises(ValueError, match="delta"):
         SteadyFlightParams(delta=0.0)
-    with pytest.raises(ValueError, match=r"\(0, 1\]"):
+    with pytest.raises(ValueError, match="delta"):
         SteadyFlightParams(
             delta={"elevator": 1.5, "aileron": 0.1, "rudder": 0.1, "throttle": 0.1}
         )
+
+
+def test_params_do_not_coerce_one_type_into_another():
+    """A quoted number or a boolean delta is a mistake in the config, not a value."""
+    with pytest.raises(ValueError, match="airspeed_band_kts"):
+        SteadyFlightParams(airspeed_band_kts="25")
+    with pytest.raises(ValueError, match="delta"):
+        SteadyFlightParams(delta=True)
 
 
 def test_pricing_stillness_on_a_continuous_task_is_rejected():

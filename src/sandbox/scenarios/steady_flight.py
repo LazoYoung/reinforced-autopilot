@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import field
+from typing import Annotated
 
 import numpy as np
+from pydantic import ConfigDict, Field, model_validator
+from pydantic.dataclasses import dataclass
 
 from aero_gym.registry import scenario
 from aero_gym.scenario import (
@@ -80,15 +83,10 @@ def _delta_fractions(
 ) -> tuple[float, ...] | None:
     """Resolve a params delta to one fraction per action variable, in order.
 
-    A number applies to every axis. A mapping must name each axis exactly once,
-    because an axis left out would otherwise take a default nobody wrote down.
+    A number applies to every axis; a mapping must name each axis exactly once.
     """
     if delta is None:
         return None
-    if isinstance(delta, bool) or not isinstance(delta, (int, float, Mapping)):
-        raise ValueError(
-            f"delta must be a number or a mapping of axis to number, got {delta!r}"
-        )
     if not isinstance(delta, Mapping):
         return tuple(float(delta) for _ in ALL_ACTION_VARIABLES)
     names = {var.value for var in ALL_ACTION_VARIABLES}
@@ -99,25 +97,12 @@ def _delta_fractions(
         )
     return tuple(float(delta[var.value]) for var in ALL_ACTION_VARIABLES)
 
-_BANDS = (
-    "altitude_band_ft",
-    "heading_band_deg",
-    "vertical_speed_band_fpm",
-    "airspeed_band_kts",
-)
-_LIMITS = (
-    "roll_limit_deg",
-    "pitch_limit_deg",
-    "aoa_limit_deg",
-    "roll_rate_scale_deg_s",
-    "pitch_rate_scale_deg_s",
-)
-_SCALES = ("aos_scale_deg",)
-_WEIGHTS = ("coordination_weight", "smoothness_weight")
-_JITTERS = ("altitude_jitter_ft", "heading_jitter_deg", "airspeed_jitter_kts")
+Positive = Annotated[float, Field(gt=0)]
+NonNegative = Annotated[float, Field(ge=0)]
+Fraction = Annotated[float, Field(gt=0, le=1)]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, config=ConfigDict(extra="forbid", strict=True))
 class SteadyFlightParams:
     """Everything tweakable about the steady-flight task.
 
@@ -140,21 +125,21 @@ class SteadyFlightParams:
     airspeed_kts: float | None = None
     """None: the chosen aircraft's cruise airspeed."""
     aircraft: str = "c172p"
-    agent_hz: float = 10.0
-    altitude_band_ft: float = 500.0
-    heading_band_deg: float = 10.0
-    vertical_speed_band_fpm: float = 1000.0
-    roll_limit_deg: float = 75.0
-    pitch_limit_deg: float = 45.0
-    aoa_limit_deg: float = 20.0
+    agent_hz: Positive = 10.0
+    altitude_band_ft: Positive = 500.0
+    heading_band_deg: Positive = 10.0
+    vertical_speed_band_fpm: Positive = 1000.0
+    roll_limit_deg: Positive = 75.0
+    pitch_limit_deg: Positive = 45.0
+    aoa_limit_deg: Positive = 20.0
     floor_altitude_ft: float = 1000.0
-    roll_rate_scale_deg_s: float = 60.0
-    pitch_rate_scale_deg_s: float = 30.0
-    altitude_jitter_ft: float = 0.0
+    roll_rate_scale_deg_s: Positive = 60.0
+    pitch_rate_scale_deg_s: Positive = 30.0
+    altitude_jitter_ft: NonNegative = 0.0
     """Half-width of the uniform draw around the target altitude."""
-    heading_jitter_deg: float = 0.0
+    heading_jitter_deg: NonNegative = 0.0
     """Half-width of the uniform draw around the target heading."""
-    airspeed_jitter_kts: float = 0.0
+    airspeed_jitter_kts: NonNegative = 0.0
     """Half-width of the uniform draw around the target airspeed.
 
     Unlike the other two this one changes the trim the episode needs, not just
@@ -163,17 +148,17 @@ class SteadyFlightParams:
     """
     hold_airspeed: bool = False
     """Whether airspeed joins the task: observed, and a fourth share of accuracy."""
-    airspeed_band_kts: float = 25.0
+    airspeed_band_kts: Positive = 25.0
     """Airspeed error at which that share reaches zero, and its bound."""
     observe_sideslip: bool = False
     """Whether the agent sees sideslip. Off reproduces the original task."""
-    aos_scale_deg: float = 5.0
+    aos_scale_deg: Positive = 5.0
     """Sideslip at which the coordination term reaches zero, and its bound."""
-    coordination_weight: float = 0.0
+    coordination_weight: NonNegative = 0.0
     """Share of the reward paid for flying coordinated rather than slipping."""
-    smoothness_weight: float = 0.0
+    smoothness_weight: NonNegative = 0.0
     """Share of the reward paid for holding the controls still."""
-    delta: float | Mapping[str, float] | None = field(
+    delta: Fraction | dict[str, Fraction] | None = field(
         default_factory=lambda: dict(DEFAULT_DELTA)
     )
     """Action step as a fraction of each axis's declared range.
@@ -184,49 +169,20 @@ class SteadyFlightParams:
     full step on every priced axis costs the whole weight at any delta.
     """
 
-    def __post_init__(self) -> None:
-        if self.agent_hz <= 0:
-            raise ValueError("agent_hz must be positive")
-        for name in _WEIGHTS:
-            if getattr(self, name) < 0:
-                raise ValueError(
-                    f"{name} is a reward share and must not be negative, got "
-                    f"{getattr(self, name)}"
-                )
-        # Strictly less than 1: accuracy is what makes this a flying task, and
-        # at a zero share the agent is paid the same wherever it flies.
-        if sum(getattr(self, name) for name in _WEIGHTS) >= 1.0:
+    @model_validator(mode="after")
+    def check_combinations(self) -> SteadyFlightParams:
+        shares = self.coordination_weight + self.smoothness_weight
+        if shares >= 1.0:
             raise ValueError(
-                f"{' + '.join(_WEIGHTS)} must leave the accuracy term a positive "
-                f"share, got {sum(getattr(self, name) for name in _WEIGHTS)}"
+                "coordination_weight + smoothness_weight must leave the accuracy term "
+                f"a positive share, got {shares}"
             )
-        # Pricing a variable the agent cannot see makes the task partially
-        # observable: the same trap that ruled out penalizing yaw rate.
         if self.coordination_weight > 0 and not self.observe_sideslip:
-            raise ValueError(
-                "coordination_weight prices sideslip, so observe_sideslip must "
-                "be True or the agent is penalized for a state it cannot see"
-            )
-        fractions = _delta_fractions(self.delta)
-        if fractions is not None and not all(0.0 < f <= 1.0 for f in fractions):
-            raise ValueError(f"every delta must be in (0, 1], got {fractions}")
-        # The term counts movement in action steps, and a continuous task has none.
-        if self.smoothness_weight > 0 and fractions is None:
-            raise ValueError(
-                "smoothness_weight prices movement in action steps, so delta must "
-                "be set rather than None"
-            )
-        for name in _BANDS + _LIMITS + _SCALES:
-            # Bands are divisors in reward_fn, so zero produces inf or NaN and
-            # a negative one inverts the comparison that terminates on it.
-            if getattr(self, name) <= 0:
-                raise ValueError(f"{name} must be positive, got {getattr(self, name)}")
-        for name in _JITTERS:
-            if getattr(self, name) < 0:
-                raise ValueError(
-                    f"{name} is a half-width and must not be negative, got "
-                    f"{getattr(self, name)}"
-                )
+            raise ValueError("coordination_weight needs observe_sideslip=True")
+        if self.smoothness_weight > 0 and self.delta is None:
+            raise ValueError("smoothness_weight needs a delta")
+        _delta_fractions(self.delta)
+        return self
 
 
 @scenario("steady_flight", params=SteadyFlightParams)

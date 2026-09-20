@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import field
 from typing import Annotated
 
@@ -26,6 +25,8 @@ from aero_gym.variables import (
     VariableSpec,
     FlightVariable as V,
 )
+
+from ..util import delta_fractions
 
 
 def heading_error_deg(current: float, target: float) -> float:
@@ -53,49 +54,10 @@ CONTROL_POSITIONS = {
     V.AILERON_POS: V.AILERON,
     V.RUDDER_POS: V.RUDDER,
 }
-"""What the smoothness term watches, each position keyed to the command moving it.
-
-Keyed to the command because the term counts movement in action steps, and a
-step belongs to the command variable, whose declared range sets its size.
-
-Throttle is deliberately out. A movement penalty is minimized by pegging an
-axis against a stop, and the throttle has one the aircraft can survive sitting
-on: with throttle in the mean, two of three seeds held full throttle for most
-of an episode and flew 25 kts fast. The aerodynamic axes have no such refuge,
-which is why the same term behaves on them. hold_airspeed prices the throttle
-instead, and prices it better, because it pays for the resulting speed rather
-than for stillness: movement the aircraft needs stays free.
-"""
+"""Positions the smoothness term watches, each keyed to the command that moves it."""
 
 DEFAULT_DELTA = {"elevator": 0.015, "aileron": 0.015, "rudder": 0.015, "throttle": 0.1}
-"""Action step per axis, as a fraction of that axis's declared range.
-
-The aerodynamic axes are finer because they work in a narrow band: on a
-converged policy elevator, aileron and rudder each used 10 to 15% of [-1, 1]
-while throttle used all of [0, 1]. 0.015 is 0.03 absolute, about ten steps
-across that band where a uniform 0.1 left three, and three grid points is what
-forced the agent to dither between them.
-"""
-
-
-def _delta_fractions(
-    delta: float | Mapping[str, float] | None,
-) -> tuple[float, ...] | None:
-    """Resolve a params delta to one fraction per action variable, in order.
-
-    A number applies to every axis; a mapping must name each axis exactly once.
-    """
-    if delta is None:
-        return None
-    if not isinstance(delta, Mapping):
-        return tuple(float(delta) for _ in ALL_ACTION_VARIABLES)
-    names = {var.value for var in ALL_ACTION_VARIABLES}
-    unknown, missing = sorted(set(delta) - names), sorted(names - set(delta))
-    if unknown or missing:
-        raise ValueError(
-            f"delta must name every action axis: unknown {unknown}, missing {missing}"
-        )
-    return tuple(float(delta[var.value]) for var in ALL_ACTION_VARIABLES)
+"""Action step per axis, as a fraction of that axis's declared range."""
 
 Positive = Annotated[float, Field(gt=0)]
 NonNegative = Annotated[float, Field(ge=0)]
@@ -106,15 +68,7 @@ Fraction = Annotated[float, Field(gt=0, le=1)]
 class SteadyFlightParams:
     """Everything tweakable about the steady-flight task.
 
-    The bands define both the observation bounds and the reward's normalizers,
-    so narrowing one makes the task harder in all three places at once. The two
-    rate scales and airspeed_band_kts are the only bounds not derived from a
-    termination condition; they exist so an excursion saturates instead of
-    wrecking the observation scale.
-
-    max_episode_steps is deliberately absent. It is a field every Scenario has,
-    so repeating it here would be boilerplate; a caller applies it with
-    dataclasses.replace on the built scenario.
+    The bands set both the observation bounds and the reward's normalizers.
     """
 
     latitude_deg: float = 37.6191
@@ -140,12 +94,7 @@ class SteadyFlightParams:
     heading_jitter_deg: NonNegative = 0.0
     """Half-width of the uniform draw around the target heading."""
     airspeed_jitter_kts: NonNegative = 0.0
-    """Half-width of the uniform draw around the target airspeed.
-
-    Unlike the other two this one changes the trim the episode needs, not just
-    where it starts: a different speed wants a different elevator and throttle,
-    so the agent cannot memorize one lever position and pass.
-    """
+    """Half-width of the uniform draw around the target airspeed."""
     hold_airspeed: bool = False
     """Whether airspeed joins the task: observed, and a fourth share of accuracy."""
     airspeed_band_kts: Positive = 25.0
@@ -163,10 +112,8 @@ class SteadyFlightParams:
     )
     """Action step as a fraction of each axis's declared range.
 
-    One number for every axis, or a mapping naming each of elevator, aileron,
-    rudder and throttle; None poses the task for continuous actions and no
-    stepping wrapper is applied. It is also the smoothness term's unit, so one
-    full step on every priced axis costs the whole weight at any delta.
+    One number for every axis, a mapping naming each axis, or None for a
+    continuous task. Also the unit the smoothness term counts movement in.
     """
 
     @model_validator(mode="after")
@@ -181,7 +128,7 @@ class SteadyFlightParams:
             raise ValueError("coordination_weight needs observe_sideslip=True")
         if self.smoothness_weight > 0 and self.delta is None:
             raise ValueError("smoothness_weight needs a delta")
-        _delta_fractions(self.delta)
+        delta_fractions(self.delta)
         return self
 
 
@@ -189,19 +136,11 @@ class SteadyFlightParams:
 def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Scenario:
     """Level-flight hold task starting near KSFO by default.
 
-    The episode is a success when it survives its step limit inside the
-    band: altitude within altitude_band_ft of target, heading within
-    heading_band_deg, and vertical speed within vertical_speed_band_fpm.
-    Reward is 1.0 on target and 0.0 at the band's corner. Leaving the band,
-    or the wider flight envelope, ends the episode. Airspeed is scored when
-    hold_airspeed is set but never ends an episode: the aoa_limit_deg check
-    already catches the slow end, and a fourth way to die would change the
-    task more than pricing the throttle's effect does.
-
-    Altitude and airspeed default to a cruise the chosen aircraft can hold, so
-    that naming an aircraft is enough to get a flyable task. With a non-zero
-    jitter the start is drawn per episode and the target follows it, which
-    keeps the task a hold rather than turning it into an unreachable go-to.
+    An episode succeeds by surviving its step limit inside the altitude, heading
+    and vertical-speed bands; leaving a band or the flight envelope ends it.
+    Airspeed is scored when hold_airspeed is set but never ends an episode.
+    Altitude and airspeed default to the aircraft's cruise, and a jittered start
+    moves the target with it.
     """
     p = params or SteadyFlightParams()
     profile = profile_for(p.aircraft)
@@ -214,7 +153,7 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
     )
     base_heading_deg = p.heading_deg % 360.0
     base_airspeed_kts = airspeed_kts
-    fractions = _delta_fractions(p.delta)
+    fractions = delta_fractions(p.delta)
     step_of = dict(zip(ALL_ACTION_VARIABLES, fractions or ()))
     # Absolute travel of one action step on each priced axis: the smoothness unit.
     control_step = {
@@ -224,12 +163,7 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
     }
 
     def setup_fn(rng: np.random.Generator) -> EpisodeSetup:
-        """Draw one episode's start, with the target following it.
-
-        All three draws are unconditional: at the default jitter of 0.0,
-        uniform(-0.0, 0.0) returns exactly 0.0, so the no-jitter path needs no
-        branch and there is no second code path to rot.
-        """
+        """Draw one episode's start, with the target following it."""
         altitude_ft = base_altitude_ft + rng.uniform(
             -p.altitude_jitter_ft, p.altitude_jitter_ft
         )
@@ -315,21 +249,8 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
     def reward_fn(t: Transition) -> tuple[float, bool]:
         """Reward in [0, 1] inside the band: 1.0 on target, 0.0 at the corner.
 
-        Never negative in band, by design. Leaving the band ends the episode,
-        so under a strictly-negative reward quitting on step 1 would score ~0
-        and beat any real flying; Transition carries no elapsed-step count,
-        so the reward function cannot price a death penalty itself.
-
-        The optional coordination and smoothness terms are mixed in as a convex
-        combination rather than subtracted, which is what keeps that floor: each
-        term is itself in [0, 1] and the shares sum to one, so no combination of
-        them can drive an in-band step below zero. Both default to a zero share,
-        which reproduces the accuracy-only reward exactly.
-
-        hold_airspeed instead divides accuracy itself, adding airspeed error as
-        a fourth equal share alongside altitude, heading and vertical speed.
-        That changes the reward's scale, so returns are comparable only between
-        runs that set it the same way.
+        Coordination and smoothness mix in as a convex combination with accuracy;
+        hold_airspeed adds airspeed error as a fourth equal share of accuracy.
         """
         obs = t.obs
         alt = abs(obs[V.ALTITUDE] - t.context["target_altitude_ft"]) / p.altitude_band_ft

@@ -13,7 +13,9 @@ env:
       rudder: 0.015
       throttle: 0.1
     hold_airspeed: true
-    airspeed_jitter_kts: 10.0
+    altitude_jitter_ft: 500.0
+    heading_jitter_deg: 20.0
+    airspeed_jitter_kts: 20.0
     observe_sideslip: true
     coordination_weight: 0.2
 

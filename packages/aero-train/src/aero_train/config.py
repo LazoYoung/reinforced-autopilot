@@ -16,9 +16,6 @@ from typing import Any, Iterator, Literal, Sequence
 import yaml
 
 
-DEFAULT_DELTA = 0.1
-
-
 @dataclass(frozen=True, slots=True)
 class EnvConfig:
     id: str | None = None
@@ -42,7 +39,6 @@ class EnvConfig:
     factory construction, so a misspelled name fails before any env is built."""
 
     render_mode: str | None = None
-    delta: float = DEFAULT_DELTA
 
     def __post_init__(self) -> None:
         if (self.id is None) == (self.scenario is None):
@@ -60,15 +56,12 @@ class EnvConfig:
             raise ValueError(
                 f"env.render_mode must be null or 'flightgear', got {self.render_mode!r}"
             )
-        if not 0.0 < self.delta <= 1.0:
-            raise ValueError("env.delta must be in (0, 1]")
         if self.scenario is None:
             # Rejected rather than ignored: a setting that silently does nothing
             # is the failure mode this whole module exists to prevent.
             for name, value in (
                 ("render_mode", self.render_mode),
                 ("params", self.params),
-                ("delta", self.delta != DEFAULT_DELTA or None),
             ):
                 if value:
                     raise ValueError(
@@ -275,6 +268,14 @@ def config_from_dict(d: dict[str, Any]) -> TrainConfig:
             f"unknown algo.type {algo_type!r}; known types are {sorted(ALGO_CONFIGS)}"
         )
     env_raw = dict(d.pop("env", {}) or {})
+    if "delta" in env_raw:
+        # Not migrated like scenario_kwargs: the old value was an absolute step and
+        # the new one a fraction of each axis's range, so no rewrite preserves it.
+        raise ValueError(
+            "env.delta moved to env.params.delta and now means a fraction of each "
+            "axis's declared range rather than an absolute step; a config or "
+            "checkpoint from before that change cannot be loaded as-is"
+        )
     if "scenario_kwargs" in env_raw:
         # Every checkpoint on disk embeds its whole config dict, so dropping the
         # old name outright would make each existing best.pt unresumable.

@@ -6,14 +6,17 @@ device: cpu
 
 env:
   scenario: steady_flight
-  delta: 0.05
   params:
+    delta:
+      elevator: 0.0075
+      aileron: 0.0075
+      rudder: 0.0075
+      throttle: 0.05
     hold_airspeed: true
     airspeed_jitter_kts: 10.0
     observe_sideslip: true
     coordination_weight: 0.2
     smoothness_weight: 0.2
-    control_rate_scale: 0.1
 
 algo:
   type: dqn

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import gymnasium as gym
 import numpy as np
 
@@ -10,9 +12,15 @@ class DeltaAction(gym.ActionWrapper):
     """Turn an n-axis control Box into Discrete(3 ** n) of per-axis increments.
 
     Each action index decodes to n base-3 digits, least significant digit
-    first; digit d in {0, 1, 2} moves its axis by {-delta, 0, +delta}. The
+    first; digit d in {0, 1, 2} moves its axis by {-step, 0, +step}, where the
+    step is that axis's delta times the width of its declared range. The
     accumulated command is clipped to the inner action space and passed
     through.
+
+    delta is a fraction rather than an absolute amount so that one number means
+    the same thing on every axis: [-1, 1] is twice as wide as [0, 1], and an
+    absolute delta would move it half as far in proportion. Give one value to
+    apply everywhere, or one value per axis.
 
     Deltas rather than absolute bins for two reasons. Exploration becomes
     temporally correlated by construction: an aircraft is a low-pass filter, so
@@ -30,19 +38,28 @@ class DeltaAction(gym.ActionWrapper):
     Markov. See docs/adr/0003.
     """
 
-    def __init__(self, env: gym.Env, delta: float = 0.1) -> None:
+    def __init__(self, env: gym.Env, delta: float | Sequence[float] = 0.1) -> None:
         super().__init__(env)
         space = env.action_space
         if not isinstance(space, gym.spaces.Box) or len(space.shape) != 1:
             raise TypeError(
                 f"DeltaAction needs a 1-D Box action space, got {space}"
             )
-        if not 0.0 < delta <= 1.0:
-            raise ValueError(f"delta must be in (0, 1], got {delta}")
-        self.delta = float(delta)
         self._n_axes = int(space.shape[0])
         self._low = np.asarray(space.low, np.float32)
         self._high = np.asarray(space.high, np.float32)
+        fractions = np.asarray(delta, np.float64)
+        if fractions.ndim == 0:
+            fractions = np.full(self._n_axes, float(fractions))
+        if fractions.shape != (self._n_axes,):
+            raise ValueError(
+                f"delta needs one value per axis, {self._n_axes} here, got shape "
+                f"{fractions.shape}"
+            )
+        if not np.all((fractions > 0.0) & (fractions <= 1.0)):
+            raise ValueError(f"every delta must be in (0, 1], got {fractions.tolist()}")
+        self.delta = tuple(float(f) for f in fractions)
+        self._step = (fractions * (self._high - self._low)).astype(np.float32)
         self.action_space = gym.spaces.Discrete(3**self._n_axes)
         self._command = np.zeros(self._n_axes, np.float32)
 
@@ -54,7 +71,7 @@ class DeltaAction(gym.ActionWrapper):
     def _deltas(self, index: int) -> np.ndarray:
         out = np.empty(self._n_axes, np.float32)
         for axis in range(self._n_axes):
-            out[axis] = (index % 3 - 1) * self.delta
+            out[axis] = (index % 3 - 1) * self._step[axis]
             index //= 3
         return out
 

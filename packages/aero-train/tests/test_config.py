@@ -213,7 +213,6 @@ def test_scenario_only_settings_are_rejected_on_the_gymnasium_branch():
     for name, kwargs in (
         ("render_mode", {"render_mode": "flightgear"}),
         ("params", {"params": {"aircraft": "737"}}),
-        ("delta", {"delta": 0.2}),
     ):
         with pytest.raises(ValueError, match=rf"env\.{name}"):
             EnvConfig(id="CartPole-v1", **kwargs)
@@ -226,13 +225,26 @@ def test_the_episode_limit_has_exactly_one_home():
         EnvConfig(scenario="steady_flight", params={"max_episode_steps": 10})
 
 
-def test_render_mode_and_delta_are_validated():
+def test_render_mode_is_validated():
     from aero_train.config import EnvConfig
 
     with pytest.raises(ValueError, match="flightgear"):
         EnvConfig(scenario="steady_flight", render_mode="opengl")
-    with pytest.raises(ValueError, match=r"\(0, 1\]"):
-        EnvConfig(scenario="steady_flight", delta=1.5)
+
+
+def test_the_old_env_delta_names_its_new_home():
+    """It changed meaning as it moved, from an absolute step to a fraction of
+    each axis's range, so it is refused rather than silently carried over."""
+    from aero_train.config import config_from_dict
+
+    with pytest.raises(ValueError, match=r"env\.params\.delta"):
+        config_from_dict(
+            {
+                "run_name": "old",
+                "env": {"scenario": "steady_flight", "delta": 0.1},
+                "algo": {"type": "dqn"},
+            }
+        )
 
 
 def test_a_scenario_env_round_trips_through_a_config_dict():
@@ -245,9 +257,8 @@ def test_a_scenario_env_round_trips_through_a_config_dict():
             "run_name": "flight",
             "env": {
                 "scenario": "steady_flight",
-                "params": {"aircraft": "737"},
+                "params": {"aircraft": "737", "delta": 0.05},
                 "render_mode": "flightgear",
-                "delta": 0.05,
             },
             "algo": {"type": "dqn"},
             # render_mode "flightgear" needs exactly one environment in total;
@@ -275,9 +286,9 @@ def test_flightgear_needs_exactly_one_environment_in_total():
     assert cfg.env.render_mode == "flightgear"
 
 
-# A ladder rung exists to change exactly these two: the action grid, and the
-# scenario knobs. Anything else differing makes the rungs uncomparable.
-LADDER_FIELDS = ("delta", "params")
+# A ladder rung exists to change the scenario's knobs, the action grid among
+# them. Anything else differing makes the rungs uncomparable.
+LADDER_FIELDS = ("params",)
 
 
 def test_every_steady_flight_config_flies_the_identical_task():
@@ -290,7 +301,7 @@ def test_every_steady_flight_config_flies_the_identical_task():
 
     Globbed rather than named, so a new rung is held to the same bar the day it
     lands. v1 is the baseline the two non-learning baselines must match exactly,
-    including delta and params: it is the rung they were measured against.
+    params included: it is the rung they were measured against.
     """
     dqns = sorted(CONFIGS_DIR.glob("dqn_steady_flight*.yaml"))
     assert dqns, "no DQN steady-flight config found; this test pins nothing"

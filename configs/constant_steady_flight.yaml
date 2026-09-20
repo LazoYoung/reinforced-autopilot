@@ -12,8 +12,12 @@ device: cpu
 
 env:
   scenario: steady_flight
-  delta: 0.1
   params:
+    delta:
+      elevator: 0.015
+      aileron: 0.015
+      rudder: 0.015
+      throttle: 0.1
     hold_airspeed: true
     airspeed_jitter_kts: 10.0
 

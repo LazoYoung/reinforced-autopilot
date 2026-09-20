@@ -91,12 +91,12 @@ def test_the_null_action_moves_nothing():
 def test_each_axis_gets_its_own_base_three_digit():
     env = DeltaAction(_four_axis_env(), delta=0.1)
     env.reset()
-    # digit 0 is axis 0: index 41 == null (40) + 1 -> axis 0 moves +delta
+    # digit 0 is axis 0: index 41 == null (40) + 1 -> axis 0 moves one step up
     env.step(41)
-    assert env.unwrapped.last_action.tolist() == pytest.approx([0.1, 0.0, 0.0, 0.0])
-    # index 40 + 3 -> axis 1 moves +delta, axis 0 unchanged
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.2, 0.0, 0.0, 0.0])
+    # index 40 + 3 -> axis 1 moves one step up, axis 0 unchanged
     env.step(43)
-    assert env.unwrapped.last_action.tolist() == pytest.approx([0.1, 0.1, 0.0, 0.0])
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.2, 0.2, 0.0, 0.0])
 
 
 def test_the_accumulator_integrates_and_clips_at_the_axis_bounds():
@@ -131,6 +131,28 @@ def test_it_reaches_initial_action_through_an_intervening_wrapper():
     env.reset()
     env.step(env.null_action)
     assert env.unwrapped.last_action[3] == pytest.approx(0.7)
+
+
+def test_delta_is_a_fraction_of_each_axis_declared_range():
+    """[-1, 1] is twice as wide as [0, 1], so the same fraction moves it twice as
+    far. An absolute delta would move both by 0.1 and fail the first entry."""
+    env = DeltaAction(_four_axis_env(), delta=0.1)
+    env.reset()
+    env.step(40 + 1 + 27)  # axis 0 and axis 3 both up one step
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.2, 0.0, 0.0, 0.1])
+
+
+def test_each_axis_can_take_its_own_delta():
+    env = DeltaAction(_four_axis_env(), delta=[0.015, 0.05, 0.1, 0.1])
+    env.reset()
+    env.step(40 + 1 + 3 + 9 + 27)  # every axis up one step
+    assert env.unwrapped.last_action.tolist() == pytest.approx([0.03, 0.1, 0.2, 0.1])
+    assert env.delta == pytest.approx((0.015, 0.05, 0.1, 0.1))
+
+
+def test_a_delta_per_axis_must_match_the_axis_count():
+    with pytest.raises(ValueError, match="one value per axis"):
+        DeltaAction(_four_axis_env(), delta=[0.1, 0.1, 0.1])
 
 
 def test_a_bad_delta_is_rejected():

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -16,7 +17,12 @@ from aero_gym.scenario import (
     raw,
 )
 from aero_gym.simulators.jsbsim.aircraft import profile_for
-from aero_gym.variables import ALL_ACTION_VARIABLES, VariableSpec, FlightVariable as V
+from aero_gym.variables import (
+    ACTION_SPECS,
+    ALL_ACTION_VARIABLES,
+    VariableSpec,
+    FlightVariable as V,
+)
 
 
 def heading_error_deg(current: float, target: float) -> float:
@@ -39,8 +45,15 @@ OBSERVATION_VARIABLES = (
     V.THROTTLE_POS,
 )
 
-CONTROL_POSITIONS = (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS)
-"""What the smoothness term watches: the three aerodynamic axes.
+CONTROL_POSITIONS = {
+    V.ELEVATOR_POS: V.ELEVATOR,
+    V.AILERON_POS: V.AILERON,
+    V.RUDDER_POS: V.RUDDER,
+}
+"""What the smoothness term watches, each position keyed to the command moving it.
+
+Keyed to the command because the term counts movement in action steps, and a
+step belongs to the command variable, whose declared range sets its size.
 
 Throttle is deliberately out. A movement penalty is minimized by pegging an
 axis against a stop, and the throttle has one the aircraft can survive sitting
@@ -50,6 +63,41 @@ which is why the same term behaves on them. hold_airspeed prices the throttle
 instead, and prices it better, because it pays for the resulting speed rather
 than for stillness: movement the aircraft needs stays free.
 """
+
+DEFAULT_DELTA = {"elevator": 0.015, "aileron": 0.015, "rudder": 0.015, "throttle": 0.1}
+"""Action step per axis, as a fraction of that axis's declared range.
+
+The aerodynamic axes are finer because they work in a narrow band: on a
+converged policy elevator, aileron and rudder each used 10 to 15% of [-1, 1]
+while throttle used all of [0, 1]. 0.015 is 0.03 absolute, about ten steps
+across that band where a uniform 0.1 left three, and three grid points is what
+forced the agent to dither between them.
+"""
+
+
+def _delta_fractions(
+    delta: float | Mapping[str, float] | None,
+) -> tuple[float, ...] | None:
+    """Resolve a params delta to one fraction per action variable, in order.
+
+    A number applies to every axis. A mapping must name each axis exactly once,
+    because an axis left out would otherwise take a default nobody wrote down.
+    """
+    if delta is None:
+        return None
+    if isinstance(delta, bool) or not isinstance(delta, (int, float, Mapping)):
+        raise ValueError(
+            f"delta must be a number or a mapping of axis to number, got {delta!r}"
+        )
+    if not isinstance(delta, Mapping):
+        return tuple(float(delta) for _ in ALL_ACTION_VARIABLES)
+    names = {var.value for var in ALL_ACTION_VARIABLES}
+    unknown, missing = sorted(set(delta) - names), sorted(names - set(delta))
+    if unknown or missing:
+        raise ValueError(
+            f"delta must name every action axis: unknown {unknown}, missing {missing}"
+        )
+    return tuple(float(delta[var.value]) for var in ALL_ACTION_VARIABLES)
 
 _BANDS = (
     "altitude_band_ft",
@@ -64,7 +112,7 @@ _LIMITS = (
     "roll_rate_scale_deg_s",
     "pitch_rate_scale_deg_s",
 )
-_SCALES = ("aos_scale_deg", "control_rate_scale")
+_SCALES = ("aos_scale_deg",)
 _WEIGHTS = ("coordination_weight", "smoothness_weight")
 _JITTERS = ("altitude_jitter_ft", "heading_jitter_deg", "airspeed_jitter_kts")
 
@@ -125,11 +173,15 @@ class SteadyFlightParams:
     """Share of the reward paid for flying coordinated rather than slipping."""
     smoothness_weight: float = 0.0
     """Share of the reward paid for holding the controls still."""
-    control_rate_scale: float = 0.1
-    """Per-step control movement at which the smoothness term reaches zero.
+    delta: float | Mapping[str, float] | None = field(
+        default_factory=lambda: dict(DEFAULT_DELTA)
+    )
+    """Action step as a fraction of each axis's declared range.
 
-    Couples to aero_train's env.delta: at the same value, one full increment
-    on every axis costs the whole smoothness weight.
+    One number for every axis, or a mapping naming each of elevator, aileron,
+    rudder and throttle; None poses the task for continuous actions and no
+    stepping wrapper is applied. It is also the smoothness term's unit, so one
+    full step on every priced axis costs the whole weight at any delta.
     """
 
     def __post_init__(self) -> None:
@@ -154,6 +206,15 @@ class SteadyFlightParams:
             raise ValueError(
                 "coordination_weight prices sideslip, so observe_sideslip must "
                 "be True or the agent is penalized for a state it cannot see"
+            )
+        fractions = _delta_fractions(self.delta)
+        if fractions is not None and not all(0.0 < f <= 1.0 for f in fractions):
+            raise ValueError(f"every delta must be in (0, 1], got {fractions}")
+        # The term counts movement in action steps, and a continuous task has none.
+        if self.smoothness_weight > 0 and fractions is None:
+            raise ValueError(
+                "smoothness_weight prices movement in action steps, so delta must "
+                "be set rather than None"
             )
         for name in _BANDS + _LIMITS + _SCALES:
             # Bands are divisors in reward_fn, so zero produces inf or NaN and
@@ -197,6 +258,14 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
     )
     base_heading_deg = p.heading_deg % 360.0
     base_airspeed_kts = airspeed_kts
+    fractions = _delta_fractions(p.delta)
+    step_of = dict(zip(ALL_ACTION_VARIABLES, fractions or ()))
+    # Absolute travel of one action step on each priced axis: the smoothness unit.
+    control_step = {
+        pos: step_of[cmd] * (ACTION_SPECS[cmd].high - ACTION_SPECS[cmd].low)
+        for pos, cmd in CONTROL_POSITIONS.items()
+        if cmd in step_of
+    }
 
     def setup_fn(rng: np.random.Generator) -> EpisodeSetup:
         """Draw one episode's start, with the target following it.
@@ -333,10 +402,13 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
             slip = min(1.0, abs(obs[V.AOS]) / p.aos_scale_deg)
             reward += p.coordination_weight * (1.0 - slip)
         if p.smoothness_weight > 0.0:
-            moved = sum(
-                abs(obs[pos] - t.prev_obs[pos]) for pos in CONTROL_POSITIONS
+            # Counted in action steps per axis, so a full step on every priced
+            # axis costs the whole weight whatever each axis's delta is.
+            steps = sum(
+                abs(obs[pos] - t.prev_obs[pos]) / control_step[pos]
+                for pos in CONTROL_POSITIONS
             ) / len(CONTROL_POSITIONS)
-            reward += p.smoothness_weight * (1.0 - min(1.0, moved / p.control_rate_scale))
+            reward += p.smoothness_weight * (1.0 - min(1.0, steps))
         terminated = (
             alt > 1.0
             or hdg > 1.0
@@ -364,4 +436,5 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         ),
         aircraft=p.aircraft,
         agent_hz=p.agent_hz,
+        action_delta=fractions,
     )

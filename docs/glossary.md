@@ -41,7 +41,8 @@ and every task lives outside the package.
 
 **Scenario** — a frozen dataclass holding everything task-specific: a
 `setup_fn`, which flight variables are actions and which are observations, the
-reward function, the aircraft, `agent_hz`, and `max_episode_steps`. The env itself
+reward function, the aircraft, `agent_hz`, `max_episode_steps`, and the
+`action_delta` a stepped agent acts in. The env itself
 holds no task knowledge. A scenario is the closest thing this project has to a
 "task" or "level".
 
@@ -131,12 +132,12 @@ Also runs inside the worker. Owns n-step return accumulation and episode-boundar
 bookkeeping.
 
 **delta action** (also **incremental action**) — a discrete action that *changes*
-a control deflection by a fixed step δ rather than *setting* it: per axis,
-`{-δ, 0, +δ}`. This is how DQN acts in this project; the `DeltaAction` wrapper
-accumulates the command, clamps it to the `ACTION_SPECS` bounds, and appends the
-four accumulated values to the observation — without which the deflection is
-hidden state and the task stops being Markov. Contrast **absolute binning**,
-where each discrete action names a fixed deflection.
+a control deflection by a step rather than *setting* it: per axis, `{-δ, 0, +δ}`,
+where δ is a fraction of that axis's declared range. This is how DQN acts in this
+project; the `DeltaAction` wrapper accumulates the command and clamps it to the
+`ACTION_SPECS` bounds. A scenario sets δ, once for every axis or per axis, or
+leaves it unset to pose a continuous task. Contrast **absolute binning**, where
+each discrete action names a fixed deflection.
 
 **Algorithm** — the learner-side object: owns the networks, the optimizers, and the
 loss. `update(batch, step) -> metrics` performs one complete parameter update,

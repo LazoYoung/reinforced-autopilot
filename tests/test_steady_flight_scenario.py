@@ -9,6 +9,7 @@ import pytest
 from aero_gym.scenario import Transition
 from aero_gym.variables import FlightVariable as V
 from sandbox.scenarios.steady_flight import (
+    CONTROL_POSITIONS,
     SteadyFlightParams,
     heading_error_deg,
     make_steady_flight_scenario,
@@ -402,14 +403,15 @@ def _moved(scenario, moves):
 
 def test_holding_every_control_still_scores_one():
     scenario = make_steady_flight_scenario(
-        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+        SteadyFlightParams(smoothness_weight=0.2, delta=0.05)
     )
     assert _moved(scenario, {}) == pytest.approx(1.0)
 
 
-def test_moving_every_control_by_the_scale_costs_the_whole_weight():
+def test_moving_every_control_by_one_step_costs_the_whole_weight():
+    """delta 0.05 of the surfaces' 2.0-wide range is a 0.1 step."""
     scenario = make_steady_flight_scenario(
-        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+        SteadyFlightParams(smoothness_weight=0.2, delta=0.05)
     )
     moves = dict.fromkeys(
         (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS, V.THROTTLE_POS), 0.1
@@ -421,10 +423,10 @@ def test_control_movement_is_averaged_over_the_three_aerodynamic_axes():
     """Three separate assertions in one: a sum instead of a mean triples each
     cost, and adding a fourth axis to the mean moves every row off 1/3."""
     scenario = make_steady_flight_scenario(
-        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+        SteadyFlightParams(smoothness_weight=0.2, delta=0.05)
     )
     for var in (V.ELEVATOR_POS, V.AILERON_POS, V.RUDDER_POS):
-        # One axis moving a full scale is a third of the mean, so a third of
+        # One axis moving a full step is a third of the mean, so a third of
         # the weight: 1 - 0.2 / 3.
         assert _moved(scenario, {var: 0.1}) == pytest.approx(1.0 - 0.2 / 3.0), var
 
@@ -435,18 +437,89 @@ def test_throttle_movement_is_not_what_the_stillness_term_prices():
     agent to hold full power and abandon the airspeed. hold_airspeed prices the
     throttle instead, by its result rather than its stillness."""
     scenario = make_steady_flight_scenario(
-        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+        SteadyFlightParams(smoothness_weight=0.2, delta=0.05)
     )
     assert _moved(scenario, {V.THROTTLE_POS: 1.0}) == pytest.approx(1.0)
 
 
 def test_control_movement_is_priced_on_magnitude_not_direction():
     scenario = make_steady_flight_scenario(
-        SteadyFlightParams(smoothness_weight=0.2, control_rate_scale=0.1)
+        SteadyFlightParams(smoothness_weight=0.2, delta=0.05)
     )
     assert _moved(scenario, {V.ELEVATOR_POS: -0.1}) == pytest.approx(
         _moved(scenario, {V.ELEVATOR_POS: 0.1})
     )
+
+
+def test_the_stillness_unit_follows_delta():
+    """The same absolute move is a different number of steps on a different
+    grid. A unit that ignored delta would score both of these alike."""
+    fine = make_steady_flight_scenario(
+        SteadyFlightParams(smoothness_weight=0.2, delta=0.015)
+    )
+    coarse = make_steady_flight_scenario(
+        SteadyFlightParams(smoothness_weight=0.2, delta=0.05)
+    )
+    moves = dict.fromkeys(CONTROL_POSITIONS, 0.015)
+    # Half of a 0.03 step on the fine grid, 0.15 of a 0.1 step on the coarse one.
+    assert _moved(fine, moves) == pytest.approx(0.9)
+    assert _moved(coarse, moves) == pytest.approx(1.0 - 0.2 * 0.15)
+
+
+def test_each_axis_is_priced_in_its_own_steps():
+    """One scalar standing in for a per-axis delta would price the aileron's
+    whole step as half of one."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(
+            smoothness_weight=0.2,
+            delta={"elevator": 0.05, "aileron": 0.025, "rudder": 0.05, "throttle": 0.1},
+        )
+    )
+    # 0.05 is a whole aileron step (0.025 of 2.0) but half an elevator step.
+    assert _moved(scenario, {V.AILERON_POS: 0.05}) == pytest.approx(1.0 - 0.2 / 3.0)
+    assert _moved(scenario, {V.ELEVATOR_POS: 0.05}) == pytest.approx(1.0 - 0.2 / 6.0)
+
+
+def test_the_scenario_carries_its_delta_in_action_variable_order():
+    """Positional, like every other action tuple: DeltaAction reads it by index."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(
+            delta={"throttle": 0.1, "rudder": 0.03, "aileron": 0.02, "elevator": 0.01}
+        )
+    )
+    assert scenario.action_variables == (V.ELEVATOR, V.AILERON, V.RUDDER, V.THROTTLE)
+    assert scenario.action_delta == (0.01, 0.02, 0.03, 0.1)
+    scalar = make_steady_flight_scenario(SteadyFlightParams(delta=0.05))
+    assert scalar.action_delta == (0.05, 0.05, 0.05, 0.05)
+
+
+def test_no_delta_poses_the_task_for_continuous_actions():
+    scenario = make_steady_flight_scenario(SteadyFlightParams(delta=None))
+    assert scenario.action_delta is None
+
+
+def test_a_delta_that_misnames_an_axis_is_rejected():
+    """An axis left out would take a default nobody wrote down."""
+    full = {"elevator": 0.015, "aileron": 0.015, "rudder": 0.015, "throttle": 0.1}
+    with pytest.raises(ValueError, match="missing.*throttle"):
+        SteadyFlightParams(delta={k: v for k, v in full.items() if k != "throttle"})
+    with pytest.raises(ValueError, match="unknown.*flaps"):
+        SteadyFlightParams(delta={**full, "flaps": 0.1})
+
+
+def test_a_delta_outside_the_unit_interval_is_rejected():
+    with pytest.raises(ValueError, match=r"\(0, 1\]"):
+        SteadyFlightParams(delta=0.0)
+    with pytest.raises(ValueError, match=r"\(0, 1\]"):
+        SteadyFlightParams(
+            delta={"elevator": 1.5, "aileron": 0.1, "rudder": 0.1, "throttle": 0.1}
+        )
+
+
+def test_pricing_stillness_on_a_continuous_task_is_rejected():
+    """The term counts movement in action steps, and a continuous task has none."""
+    with pytest.raises(ValueError, match="delta"):
+        SteadyFlightParams(smoothness_weight=0.2, delta=None)
 
 
 def test_both_terms_together_still_never_score_negative_in_band():

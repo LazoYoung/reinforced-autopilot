@@ -11,9 +11,10 @@ import dataclasses
 from typing import Callable
 
 import gymnasium as gym
+from aero_train.config import EnvConfig
 
 
-def make_env_fn(cfg) -> Callable[[], gym.Env]:
+def make_env_fn(cfg: EnvConfig) -> Callable[[], gym.Env]:
     """Return a zero-argument callable that builds one environment.
 
     Two branches, selected by which of `cfg.scenario` and `cfg.id` is set.
@@ -30,7 +31,7 @@ def make_env_fn(cfg) -> Callable[[], gym.Env]:
     return _make
 
 
-def _make_scenario_env_fn(cfg) -> Callable[[], gym.Env]:
+def _make_scenario_env_fn(cfg: EnvConfig) -> Callable[[], gym.Env]:
     """Build an AeroGymEnv for the configured scenario.
 
     aero_gym is imported here, not at module scope, so the Gymnasium branch
@@ -54,7 +55,6 @@ def _make_scenario_env_fn(cfg) -> Callable[[], gym.Env]:
     params = build_params(registration, cfg.params)
     max_episode_steps = cfg.max_episode_steps
     render_mode = cfg.render_mode
-    delta = cfg.delta
 
     def _make() -> gym.Env:
         scenario = (
@@ -64,7 +64,10 @@ def _make_scenario_env_fn(cfg) -> Callable[[], gym.Env]:
             # Applied here rather than as a params field every scenario would
             # have to repeat; replace re-runs the frozen dataclass validation.
             scenario = dataclasses.replace(scenario, max_episode_steps=max_episode_steps)
-        env = AeroGymEnv(scenario, render_mode=render_mode)
-        return DeltaAction(ScaleObservation(env), delta=delta)
+        env = ScaleObservation(AeroGymEnv(scenario, render_mode=render_mode))
+        if scenario.action_delta is None:
+            # Posed for continuous actions: the algorithm acts on the Box itself.
+            return env
+        return DeltaAction(env, delta=scenario.action_delta)
 
     return _make

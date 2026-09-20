@@ -15,7 +15,6 @@ class _EnvCfg:
     max_episode_steps: int | None = None
     params: dict | None = None
     render_mode: str | None = None
-    delta: float = 0.1
 
     def __post_init__(self):
         if self.params is None:
@@ -109,13 +108,28 @@ def test_the_scenario_branch_applies_max_episode_steps():
         env.close()
 
 
-def test_the_scenario_branch_plumbs_delta_through_to_the_wrapper():
-    # Discrete(81) follows from the axis count alone and cannot show whether
-    # cfg.delta reached DeltaAction, so the attribute is read directly.
+def test_the_scenario_branch_takes_its_delta_from_the_scenario():
+    # Discrete(81) follows from the axis count alone and cannot show whether the
+    # scenario's delta reached DeltaAction, so the attribute is read directly.
     pytest.importorskip("jsbsim")
-    env = make_env_fn(_EnvCfg(scenario="steady_flight", delta=0.5))()
+    env = make_env_fn(_EnvCfg(scenario="steady_flight", params={"delta": 0.5}))()
     try:
-        assert env.delta == 0.5
+        assert env.delta == (0.5, 0.5, 0.5, 0.5)
+    finally:
+        env.close()
+
+
+def test_a_scenario_posed_for_continuous_actions_gets_the_box_itself():
+    """No delta, no stepping: a continuous algorithm must see the Box, and a
+    DeltaAction applied regardless would quietly discretize it."""
+    pytest.importorskip("jsbsim")
+    from aero_train.envs.delta import DeltaAction
+
+    env = make_env_fn(_EnvCfg(scenario="steady_flight", params={"delta": None}))()
+    try:
+        assert not isinstance(env, DeltaAction)
+        assert isinstance(env.action_space, gym.spaces.Box)
+        assert env.action_space.shape == (4,)
     finally:
         env.close()
 

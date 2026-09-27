@@ -92,7 +92,9 @@ def export_policy(
     `env_fn` builds the env the policy was trained through; `metadata` adds
     what only the checkpoint knows (aero.config, aero.frames). The file is
     written beside `path` and renamed into place only once the check passes,
-    so a failure leaves any earlier file untouched.
+    so a failure leaves any earlier file untouched. Traces the scenario code
+    in the current checkout, so export a checkpoint with the code it was
+    trained on.
     """
     _require_onnx()
     policy = algo.policy_module()
@@ -131,7 +133,8 @@ def check_policy_file(
     The env steps on `policy`'s actions. The file is fed the same readings and
     targets by name, and prev.* from the wrapper's command, re-synced every
     step so one flip cannot compound. Raises PolicyCheckError at the first step
-    no near-tie explains, or once flips exceed max(1, steps // 100).
+    no near-tie explains, or after the episode ends if flips exceeded
+    max(1, steps // 100).
     """
     import onnxruntime as ort
 

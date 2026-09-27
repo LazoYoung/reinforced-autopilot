@@ -9,13 +9,20 @@ uv run autopilot export runs/dqn-steady-flight/v4/best.pt -o exports/hold.onnx
 ```
 
 Before keeping the file, export flies one greedy episode with it beside the
-checkpoint, and writes nothing if the two disagree.
+checkpoint. A failed check leaves no policy file (an existing file is
+untouched), though it may leave behind a directory it just created.
+
+Export traces the scenario code in the current checkout: export a checkpoint
+with the code it was trained on. The check compares the file with that code,
+not with the code at training time, so a checkpoint exported after its
+scenario's features changed can still pass with a different file.
 
 ## Inputs and outputs
 
 Every input and output is a float32 tensor of shape `[batch]`, in the
 [canonical units](../README.md#canonical-units) and the pilot sign convention.
-Each one's ONNX doc string gives its unit, range and meaning.
+Each input's and each action output's ONNX doc string gives its unit, range
+and meaning.
 
 | Name | Direction | Meaning |
 |---|---|---|

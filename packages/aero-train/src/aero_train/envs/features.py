@@ -104,7 +104,7 @@ def scenario_of(env: gym.Env) -> Any:
 
 
 def trace_scenario(scenario: Any) -> TracedScenario:
-    """Trace each of the scenario's features alone, then all of them as one module.
+    """Traces each of the scenario's features alone, then builds them into one module.
 
     Tracing alone first is what lets an error name the feature. The file takes
     only the readings and targets some feature reads.

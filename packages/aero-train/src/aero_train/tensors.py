@@ -28,3 +28,17 @@ StateValue = torch.Tensor
 Command = torch.Tensor
 """[batch, n_axes] float32: one control command per action variable, in
 canonical units and the action Box's order."""
+
+
+def example_columns(n: int) -> tuple[Column, ...]:
+    """Sample inputs for tracing a forward(*inputs: Column).
+
+    Two rows, so no trace can mistake the batch axis for a constant 1.
+    """
+    return tuple(torch.zeros(2) for _ in range(n))
+
+
+def column_shapes(n: int) -> dict[str, tuple[dict[int, torch.export.Dim], ...]]:
+    """torch.export dynamic_shapes for a forward(*inputs: Column): one shared batch axis."""
+    batch = torch.export.Dim("batch")
+    return {"inputs": tuple({0: batch} for _ in range(n))}

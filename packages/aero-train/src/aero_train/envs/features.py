@@ -170,18 +170,25 @@ class _Lookups(Mapping):
     def __len__(self) -> int:
         return len(self._values)
 
+    def samples(self) -> list[Column]:
+        """Every sample column handed out, whether or not the feature read it."""
+        return list(self._values.values())
+
 
 def _trace_one(feature: Any, observed: Sequence[Any], declared: Sequence[str]) -> list[Any]:
     """Which readings and targets one feature reads, raising if it cannot be traced."""
     obs = _Lookups(observed, "the scenario does not observe")
     context = _Lookups(declared, "the scenario does not declare in context_variables")
     rule = "a feature may use arithmetic operators and abs only; see ObservationFeature"
+    versions = [c._version for c in (*obs.samples(), *context.samples())]
     try:
         out = feature.fn(obs, context)
     except _Unavailable as exc:
         raise ValueError(f"{feature.name} reads {exc.message}") from None
     except Exception as exc:
         raise ValueError(f"{feature.name} is not traceable: {exc}; {rule}") from exc
+    if versions != [c._version for c in (*obs.samples(), *context.samples())]:
+        raise ValueError(f"{feature.name} is not traceable: it changes its input in place; {rule}")
     if not isinstance(out, torch.Tensor) or tuple(out.shape) != (2,):
         raise ValueError(
             f"{feature.name} is not traceable: it returned {type(out).__name__}, not "

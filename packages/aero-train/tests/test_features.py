@@ -15,6 +15,24 @@ from aero_train.envs.features import scenario_of, trace_scenario
 from tests.flight_fakes import toy_env_fn, toy_scenario
 
 
+def _stateful_roll_delta():
+    """A feature closed over its own mutable state: this step's roll minus last step's."""
+    state: dict[str, torch.Tensor] = {}
+
+    def fn(obs, ctx):
+        prev = state.get("r", obs[V.ROLL])
+        state["r"] = obs[V.ROLL]
+        return obs[V.ROLL] - prev
+
+    return fn
+
+
+def _in_place_roll(obs, ctx):
+    x = obs[V.ROLL]
+    x -= 10.0
+    return x
+
+
 def _with_feature(fn, name="extra"):
     base = toy_scenario()
     feature = ObservationFeature(name, VariableSpec("deg", -45.0, 45.0, "test feature"), fn)
@@ -117,8 +135,10 @@ def test_a_gymnasium_env_has_no_scenario_to_export():
         lambda obs, ctx: float(obs[V.ROLL]),
         lambda obs, ctx: obs[V.ROLL] if obs[V.ROLL] > 0 else -obs[V.ROLL],
         lambda obs, ctx: 0.5,
+        _stateful_roll_delta(),
+        _in_place_roll,
     ],
-    ids=["math", "float", "branch", "constant"],
+    ids=["math", "float", "branch", "constant", "stateful", "in-place"],
 )
 def test_a_feature_that_cannot_be_traced_is_named(fn):
     with pytest.raises(ValueError, match="roll_magnitude is not traceable"):

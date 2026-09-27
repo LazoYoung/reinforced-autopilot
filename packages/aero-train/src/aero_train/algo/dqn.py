@@ -21,6 +21,7 @@ from ..primitives import (
     Segment,
     Transitions,
 )
+from ..tensors import ActionIndex, ScaledObservation, StateValue
 from .base import Algorithm
 
 
@@ -66,6 +67,22 @@ class DQNAgent(Agent):
 
 
 GRAD_CLIP = 10.0
+
+
+class _GreedyQ(nn.Module):
+    """A Q-network acting greedily: the argmax action and its Q-value.
+
+    The maximum Q-value is the state's value under greedy play, and unlike the
+    argmax it is continuous in the network's inputs.
+    """
+
+    def __init__(self, net: nn.Module) -> None:
+        super().__init__()
+        self.net = net
+
+    def forward(self, obs: ScaledObservation) -> tuple[ActionIndex, StateValue]:
+        value, action = self.net(obs).max(dim=1)
+        return action, value
 
 
 class DQN(Algorithm):
@@ -214,3 +231,7 @@ class DQN(Algorithm):
         self._frames = int(sd["frames"])
         self._global_step = int(sd["global_step"])
         self.buffer.rng.bit_generator.state = sd["buffer_rng"]
+
+    def policy_module(self) -> nn.Module:
+        net = copy.deepcopy(self.net).cpu().eval().requires_grad_(False)
+        return _GreedyQ(net).eval()

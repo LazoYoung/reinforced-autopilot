@@ -90,3 +90,10 @@ def test_a_baseline_rejects_a_continuous_action_space():
             gym.spaces.Box(-1.0, 1.0, (4,), np.float32),
             gym.spaces.Box(-1.0, 1.0, (4,), np.float32),
         )
+
+
+@pytest.mark.parametrize("algo", [{"type": "random"}, {"type": "constant"}])
+def test_a_baseline_cannot_be_exported(algo):
+    baseline = build_algorithm(_cfg(algo), *_spaces(81))
+    with pytest.raises(NotImplementedError, match=f"{type(baseline).__name__} cannot be exported"):
+        baseline.policy_module()

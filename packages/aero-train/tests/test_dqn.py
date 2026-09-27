@@ -318,3 +318,30 @@ def test_build_algorithm_builds_dqn_for_a_discrete_action_space():
     cfg = TrainConfig(run_name="t", env=EnvConfig(id="CartPole-v1"), algo=CFG)
     algo = build_algorithm(cfg, gym.spaces.Box(-1, 1, (4,)), gym.spaces.Discrete(2))
     assert isinstance(algo, DQN)
+
+
+def test_the_policy_module_picks_the_greedy_action_and_its_q_value():
+    algo = make_dqn()
+    obs = torch.as_tensor(
+        np.random.default_rng(0).uniform(-1.0, 1.0, (64, 4)), dtype=torch.float32
+    )
+    action, value = algo.policy_module()(obs)
+    with torch.no_grad():
+        q = algo.net(obs)
+    assert action.dtype == torch.int64 and action.shape == (64,)
+    assert torch.equal(action, q.argmax(dim=1))
+    torch.testing.assert_close(value, q.max(dim=1).values)
+
+
+def test_the_policy_module_is_a_copy_the_learner_cannot_move():
+    """Export traces this module while the learner may still be training."""
+    algo = make_dqn()
+    policy = algo.policy_module()
+    obs = torch.zeros(1, 4)
+    before = policy(obs)[1].clone()
+    with torch.no_grad():
+        for param in algo.net.parameters():
+            param.add_(1.0)
+    torch.testing.assert_close(policy(obs)[1], before)
+    assert all(p.device.type == "cpu" and not p.requires_grad for p in policy.parameters())
+    assert not policy.training

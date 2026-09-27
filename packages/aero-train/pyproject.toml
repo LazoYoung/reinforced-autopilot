@@ -29,6 +29,15 @@ dependencies = [
 [project.scripts]
 autopilot = "aero_train.cli:main"
 
+[project.optional-dependencies]
+# autopilot export: the ONNX writer torch.onnx drives, the checker, and the
+# runtime the export check flies the file in
+export = [
+    "onnx>=1.23.0",
+    "onnxruntime>=1.30.0",
+    "onnxscript>=0.7.2",
+]
+
 [tool.uv.sources]
 aero-gym = { workspace = true }
 

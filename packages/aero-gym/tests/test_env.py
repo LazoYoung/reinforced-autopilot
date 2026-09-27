@@ -241,21 +241,78 @@ def test_the_context_reaches_the_features_and_the_reward(fake_simulator):
     assert reward == pytest.approx(4000.0)
 
 
+def _declaring(setup_fn, low=4000.0, high=6000.0):
+    from aero_gym.scenario import ContextVariable
+    from aero_gym.variables import VariableSpec
+
+    return Scenario(
+        name="declared",
+        setup_fn=setup_fn,
+        reward_fn=lambda t: (0.0, False),
+        context_variables=(
+            ContextVariable(
+                "target_altitude_ft", VariableSpec("ft", low, high, "altitude to hold")
+            ),
+        ),
+    )
+
+
 def test_a_setup_missing_a_declared_context_key_names_the_key_and_the_scenario():
     """The failure this catches is delayed: a sampler with a conditional branch
     can return a complete context for four hundred episodes and a short one on
     the next, and a bare KeyError from inside a lambda names neither."""
-    from aero_gym.scenario import EpisodeSetup, InitialConditions, Scenario
+    from aero_gym.scenario import EpisodeSetup
 
-    scenario = Scenario(
-        name="declared",
-        setup_fn=lambda rng: EpisodeSetup(InitialConditions(0.0, 0.0, 5000.0, 270.0)),
-        reward_fn=lambda t: (0.0, False),
-        context_keys=("target_altitude_ft",),
+    scenario = _declaring(
+        lambda rng: EpisodeSetup(InitialConditions(0.0, 0.0, 5000.0, 270.0))
     )
     env = AeroGymEnv(scenario, simulator=FakeSimulator())
     with pytest.raises(KeyError, match=r"declared.*target_altitude_ft"):
         env.reset(seed=0)
+
+
+def test_a_target_drawn_outside_its_declared_range_names_the_key_value_and_range():
+    scenario = _declaring(
+        fixed_setup(
+            InitialConditions(0.0, 0.0, 5000.0, 270.0), target_altitude_ft=7000.0
+        )
+    )
+    env = AeroGymEnv(scenario, simulator=FakeSimulator())
+    with pytest.raises(ValueError, match=r"declared.*target_altitude_ft.*7000.*4000.*6000"):
+        env.reset(seed=0)
+
+
+def test_a_target_on_the_edge_of_its_range_is_inside_it():
+    scenario = _declaring(
+        fixed_setup(
+            InitialConditions(0.0, 0.0, 5000.0, 270.0), target_altitude_ft=6000.0
+        )
+    )
+    _, info = AeroGymEnv(scenario, simulator=FakeSimulator()).reset(seed=0)
+    assert info["context"]["target_altitude_ft"] == 6000.0
+
+
+def test_a_declared_range_of_one_value_accepts_that_value():
+    """A target that never varies declares low == high, and must still reset."""
+    scenario = _declaring(
+        fixed_setup(
+            InitialConditions(0.0, 0.0, 5000.0, 270.0), target_altitude_ft=5000.0
+        ),
+        low=5000.0,
+        high=5000.0,
+    )
+    _, info = AeroGymEnv(scenario, simulator=FakeSimulator()).reset(seed=0)
+    assert info["context"]["target_altitude_ft"] == 5000.0
+
+
+def test_a_nan_target_is_outside_every_range():
+    scenario = _declaring(
+        fixed_setup(
+            InitialConditions(0.0, 0.0, 5000.0, 270.0), target_altitude_ft=float("nan")
+        )
+    )
+    with pytest.raises(ValueError, match="target_altitude_ft"):
+        AeroGymEnv(scenario, simulator=FakeSimulator()).reset(seed=0)
 
 
 def _bounded_scenario(low=-100.0, high=100.0):

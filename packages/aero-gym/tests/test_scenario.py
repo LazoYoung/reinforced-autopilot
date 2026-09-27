@@ -101,6 +101,20 @@ def test_duplicate_feature_names_are_rejected(initial_conditions):
         )
 
 
+def test_duplicate_context_variable_names_are_rejected(initial_conditions):
+    from aero_gym.scenario import ContextVariable
+    from aero_gym.variables import VariableSpec
+
+    target = ContextVariable("target_altitude_ft", VariableSpec("ft", 0.0, 1.0, "altitude"))
+    with pytest.raises(ValueError, match="duplicate context variable"):
+        Scenario(
+            name="dup",
+            setup_fn=fixed_setup(initial_conditions),
+            reward_fn=lambda t: (0.0, False),
+            context_variables=(target, target),
+        )
+
+
 def test_fixed_setup_returns_the_same_setup_for_any_generator():
     import numpy as np
 

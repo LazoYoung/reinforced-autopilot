@@ -11,6 +11,7 @@ from pydantic.dataclasses import dataclass
 
 from aero_gym.registry import scenario
 from aero_gym.scenario import (
+    ContextVariable,
     EpisodeSetup,
     InitialConditions,
     ObservationFeature,
@@ -190,6 +191,31 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
             },
         )
 
+    # Heading is declared whole: the policy only ever sees it as an error.
+    context_variables = (
+        ContextVariable(
+            "target_altitude_ft",
+            VariableSpec(
+                "ft",
+                base_altitude_ft - p.altitude_jitter_ft,
+                base_altitude_ft + p.altitude_jitter_ft,
+                "altitude to hold, MSL",
+            ),
+        ),
+        ContextVariable(
+            "target_heading_deg", VariableSpec("deg", 0.0, 360.0, "true heading to hold")
+        ),
+        ContextVariable(
+            "target_airspeed_kts",
+            VariableSpec(
+                "kt",
+                base_airspeed_kts - p.airspeed_jitter_kts,
+                base_airspeed_kts + p.airspeed_jitter_kts,
+                "calibrated airspeed to hold",
+            ),
+        ),
+    )
+
     features = (
         ObservationFeature(
             "altitude_error_ft",
@@ -306,11 +332,7 @@ def make_steady_flight_scenario(params: SteadyFlightParams | None = None) -> Sce
         observation_variables=observation_variables,
         observation_features=features,
         reward_fn=reward_fn,
-        context_keys=(
-            "target_altitude_ft",
-            "target_heading_deg",
-            "target_airspeed_kts",
-        ),
+        context_variables=context_variables,
         aircraft=p.aircraft,
         agent_hz=p.agent_hz,
         action_delta=fractions,

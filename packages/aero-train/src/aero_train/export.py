@@ -108,10 +108,10 @@ def export_policy(
         try:
             _write(tmp, graph, traced, metadata)
             report = check_policy_file(tmp, policy, env, traced, seed=seed)
+            os.replace(tmp, path)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
-        os.replace(tmp, path)
         return report
     finally:
         env.close()

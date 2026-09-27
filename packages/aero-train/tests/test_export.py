@@ -114,21 +114,21 @@ def _rename(model, a: str, b: str, columns: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "a, b, columns",
+    "a, b, columns, match",
     [
-        ("altitude", "heading", "input"),
-        ("prev.elevator", "prev.aileron", "input"),
-        ("elevator", "aileron", "output"),
+        ("altitude", "heading", "input", r"step 0: value"),
+        ("prev.elevator", "prev.aileron", "input", r"step 0: .*no action reaches"),
+        ("elevator", "aileron", "output", r"step 0: .*no action reaches"),
     ],
     ids=["readings", "prev", "actions"],
 )
-def test_the_check_rejects_a_file_with_two_names_swapped(exported, tmp_path, a, b, columns):
+def test_the_check_rejects_a_file_with_two_names_swapped(exported, tmp_path, a, b, columns, match):
     algo, path, _ = exported
     model = onnx.load(str(path))
     _rename(model, a, b, columns)
     bad = tmp_path / "swapped.onnx"
     onnx.save(model, str(bad))
-    with pytest.raises(PolicyCheckError, match="step 0"):
+    with pytest.raises(PolicyCheckError, match=match):
         _check(bad, algo.policy_module())
 
 
@@ -181,6 +181,15 @@ def test_a_failed_check_keeps_an_existing_file_and_leaves_no_temp(tmp_path, monk
         export_policy(path, _dqn(), toy_env_fn(), seed=0, metadata=META)
     assert path.read_bytes() == b"the previous export"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["policy.onnx"]
+
+
+def test_a_failed_rename_leaves_no_temp(tmp_path):
+    """A rename failure, not just a failed check, must still clean up the temp file."""
+    path = tmp_path / "policy.onnx"
+    path.mkdir()
+    with pytest.raises(OSError):
+        export_policy(path, _dqn(), toy_env_fn(), seed=0, metadata=META)
+    assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())
 
 
 def test_an_algorithm_without_a_policy_is_refused_before_any_env_is_built(tmp_path):

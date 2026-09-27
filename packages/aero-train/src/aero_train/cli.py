@@ -1,9 +1,10 @@
-"""The `autopilot` command: run, resume, eval."""
+"""The `autopilot` command: train, resume, eval, export, mlflow."""
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import os
 import shutil
 import sys
@@ -15,6 +16,7 @@ from .algo import build_algorithm
 from .checkpoint import CheckpointManager, load_checkpoint
 from .config import TrainConfig, config_from_dict, load_config
 from .envs import make_env_fn, observation_saturation_report
+from .export import export_policy
 from .rollout import build_engine
 from .tracking import build_tracker
 from .trainer import Trainer, evaluate_policy
@@ -116,6 +118,33 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    payload = load_checkpoint(Path(args.checkpoint))
+    cfg = config_from_dict(payload["config"])
+    if cfg.env.scenario is None:
+        raise ValueError(
+            "export needs an aero_gym scenario env; this checkpoint was trained on "
+            f"Gymnasium env {cfg.env.id!r}, whose observations have no canonical names"
+        )
+    env_fn = make_env_fn(cfg.env)
+    obs_space, act_space = _spaces(env_fn)
+    algo = build_algorithm(cfg, obs_space, act_space)
+    algo.load_state_dict(payload["algo"])
+    output = Path(args.output) if args.output else Path(args.checkpoint).with_suffix(".onnx")
+    report = export_policy(
+        output,
+        algo,
+        env_fn,
+        seed=cfg.seed,
+        metadata={
+            "aero.config": json.dumps(payload["config"], sort_keys=True),
+            "aero.frames": str(int(payload["frames"])),
+        },
+    )
+    print(f"wrote {output}: {report.steps} steps checked, {report.flips} near-tie flips")
+    return 0
+
+
 def build_mlflow_server_argv(store: str, host: str, port: int) -> list[str]:
     """Build the argv for `uvx --from mlflow mlflow server ...`.
 
@@ -189,6 +218,16 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--episodes", type=int, default=20)
     ev.add_argument("--flightgear", action="store_true")
     ev.set_defaults(func=cmd_eval)
+
+    ex = sub.add_parser("export", help="write a flight checkpoint's policy as one ONNX file")
+    ex.add_argument("checkpoint")
+    ex.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="where to write it; default: the checkpoint's name with .onnx, beside it",
+    )
+    ex.set_defaults(func=cmd_export)
 
     ml = sub.add_parser("mlflow", help="launch `mlflow server` against the local run store")
     ml.add_argument("--port", type=int, default=5000)

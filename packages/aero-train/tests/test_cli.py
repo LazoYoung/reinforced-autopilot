@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import textwrap
 
@@ -139,7 +140,9 @@ class _ScriptedEnv(gym.Env):
         return np.zeros(self.observation_space.shape, np.float32), 1.0, True, False, {}
 
 
-def _write_checkpoint(tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81):
+def _write_checkpoint(
+    tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81, algo: dict | None = None
+):
     """A checkpoint for an arbitrary env config, without running a training loop."""
     from aero_train.algo import build_algorithm
     from aero_train.config import config_from_dict, config_to_dict
@@ -150,8 +153,9 @@ def _write_checkpoint(tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81)
             "seed": 0,
             "total_steps": 64,
             "env": env,
-            "algo": {"type": "dqn", "hidden_sizes": [8], "buffer_size": 200,
-                     "warmup_frames": 16, "batch_size": 8},
+            "algo": algo
+            or {"type": "dqn", "hidden_sizes": [8], "buffer_size": 200,
+                "warmup_frames": 16, "batch_size": 8},
             "rollout": {"engine": "local", "envs_per_worker": 1, "frames_per_iter": 8},
             "tracking": {"enabled": False},
         }
@@ -388,3 +392,54 @@ def test_training_with_a_viewer_builds_its_eval_env_without_one(monkeypatch, tmp
     assert cli.main(["train", str(path)]) == 0
     assert "flightgear" in render_modes, "the training env must keep its viewer"
     assert captured["eval_env_fn"].render_mode is None
+
+
+# --- autopilot export --------------------------------------------------------
+
+
+@pytest.fixture
+def toy_checkpoint(monkeypatch, tmp_path):
+    """A flight checkpoint whose env is the toy hold task rather than JSBSim."""
+    from tests.flight_fakes import N_ACTIONS, N_FEATURES, toy_env_fn
+
+    monkeypatch.setattr(cli, "make_env_fn", lambda env_cfg: toy_env_fn())
+    return _write_checkpoint(
+        tmp_path, env={"scenario": "steady_flight"}, n_obs=N_FEATURES, n_actions=N_ACTIONS
+    )
+
+
+def test_export_writes_beside_the_checkpoint_and_says_what_it_checked(toy_checkpoint, capsys):
+    import onnx
+
+    assert cli.main(["export", str(toy_checkpoint)]) == 0
+    written = toy_checkpoint.with_suffix(".onnx")
+    meta = {p.key: p.value for p in onnx.load(str(written)).metadata_props}
+    config = load_checkpoint(toy_checkpoint)["config"]
+    # Through JSON on both sides: the checkpoint keeps tuples, JSON reads back lists.
+    assert json.loads(meta["aero.config"]) == json.loads(json.dumps(config))
+    assert meta["aero.frames"] == "0"
+    assert "steps checked" in capsys.readouterr().out
+
+
+def test_export_writes_where_output_says_creating_the_directory(toy_checkpoint, tmp_path):
+    target = tmp_path / "exports" / "v1.onnx"
+    assert cli.main(["export", str(toy_checkpoint), "-o", str(target)]) == 0
+    assert target.exists()
+    assert not toy_checkpoint.with_suffix(".onnx").exists()
+
+
+def test_export_refuses_a_gymnasium_checkpoint_before_building_anything(tmp_path):
+    path = _write_checkpoint(tmp_path, env={"id": "CartPole-v1"}, n_obs=4, n_actions=2)
+    with pytest.raises(ValueError, match="canonical names"):
+        cli.main(["export", str(path)])
+
+
+def test_export_refuses_a_baseline(monkeypatch, tmp_path):
+    from tests.flight_fakes import N_ACTIONS, toy_env_fn
+
+    monkeypatch.setattr(cli, "make_env_fn", lambda env_cfg: toy_env_fn())
+    path = _write_checkpoint(
+        tmp_path, env={"scenario": "steady_flight"}, n_actions=N_ACTIONS, algo={"type": "random"}
+    )
+    with pytest.raises(NotImplementedError, match="Random cannot be exported"):
+        cli.main(["export", str(path)])

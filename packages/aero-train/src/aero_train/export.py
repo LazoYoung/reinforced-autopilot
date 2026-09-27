@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import os
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -204,15 +205,21 @@ def _write(
     )
     inputs = (*traced.inputs, *prev)
     outputs = (*traced.actions, VALUE)
-    program = torch.onnx.export(
-        graph,
-        example_columns(len(inputs)),
-        dynamo=True,
-        input_names=[p.name for p in inputs],
-        output_names=[p.name for p in outputs],
-        dynamic_shapes=column_shapes(len(inputs)),
-        verbose=False,
-    )
+    with warnings.catch_warnings():
+        # Every input and output shares one dim name ("batch") on purpose; this
+        # warning is about that, not about anything wrong with the graph.
+        warnings.filterwarnings(
+            "ignore", message=r"# The axis name: batch will not be used.*", category=UserWarning
+        )
+        program = torch.onnx.export(
+            graph,
+            example_columns(len(inputs)),
+            dynamo=True,
+            input_names=[p.name for p in inputs],
+            output_names=[p.name for p in outputs],
+            dynamic_shapes=column_shapes(len(inputs)),
+            verbose=False,
+        )
     program.save(str(path), external_data=False)
     model = onnx.load(str(path))
     docs = {p.name: p.doc for p in (*inputs, *outputs)}

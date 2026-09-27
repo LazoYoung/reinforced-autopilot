@@ -3,6 +3,7 @@ from __future__ import annotations
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
 from aero_train.envs.scale import ScaleObservation
 
@@ -158,3 +159,62 @@ def test_a_delta_per_axis_must_match_the_axis_count():
 def test_a_bad_delta_is_rejected():
     with pytest.raises(ValueError, match=r"\(0, 1\]"):
         DeltaAction(_four_axis_env(), delta=0.0)
+
+
+def test_the_scale_twin_matches_the_wrapper_inside_and_beyond_the_bounds():
+    low, high = [-500.0, 0.0, -30.0], [500.0, 1.0, 30.0]
+    wrapper = ScaleObservation(BoxEnv(low, high))
+    rng = np.random.default_rng(0)
+    rows = rng.uniform(
+        np.array(low) * 1.5 - 1.0, np.array(high) * 1.5 + 1.0, (256, 3)
+    ).astype(np.float32)
+    rows[0], rows[1] = low, high
+    got = wrapper.to_torch()(torch.as_tensor(rows)).numpy()
+    want = np.stack([wrapper.observation(row) for row in rows])
+    np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-7)
+
+
+def _delta_env(initial):
+    return DeltaAction(_four_axis_env(initial=initial), delta=[0.015, 0.05, 0.1, 0.2])
+
+
+@pytest.mark.parametrize(
+    "initial",
+    [[0.1, -0.2, 0.3, 0.7], [1.0, -1.0, 0.99, 0.0]],
+    ids=["interior", "at-and-near-the-bounds"],
+)
+def test_the_step_twin_decodes_all_81_actions_as_the_wrapper_does(initial):
+    """A different delta on every axis, so a twin reading the digits in reverse fails."""
+    env = _delta_env(initial)
+    twin = env.to_torch()
+    command = torch.tensor([initial], dtype=torch.float32)
+    for index in range(81):
+        env.reset()
+        env.step(index)
+        got = twin(torch.tensor([index]), command)
+        np.testing.assert_array_equal(
+            got[0].numpy(), env.unwrapped.last_action, err_msg=f"index {index}"
+        )
+
+
+def test_the_step_twin_steps_each_row_from_its_own_command():
+    twin = _delta_env(None).to_torch()
+    commands = torch.tensor([[0.0, 0.0, 0.0, 0.5], [0.5, -0.5, 0.2, 0.1]])
+    got = twin(torch.tensor([41, 40]), commands)  # row 0: axis 0 up; row 1: null
+    np.testing.assert_allclose(
+        got.numpy(), [[0.03, 0.0, 0.0, 0.5], [0.5, -0.5, 0.2, 0.1]], rtol=1e-6
+    )
+
+
+def test_command_reads_the_accumulator_without_exposing_it():
+    env = _delta_env([0.1, -0.2, 0.3, 0.7])
+    env.reset()
+    env.step(41)
+    command = env.command
+    np.testing.assert_allclose(command, [0.13, -0.2, 0.3, 0.7], rtol=1e-6)
+    command[:] = 0.0
+    np.testing.assert_allclose(env.command, [0.13, -0.2, 0.3, 0.7], rtol=1e-6)
+
+
+def test_step_sizes_are_each_delta_times_its_axis_span():
+    np.testing.assert_allclose(_delta_env(None).step_sizes, [0.03, 0.1, 0.2, 0.2], rtol=1e-6)

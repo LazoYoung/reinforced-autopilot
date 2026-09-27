@@ -146,10 +146,27 @@ def test_a_feature_that_cannot_be_traced_is_named(fn):
 
 
 def test_arithmetic_and_abs_trace():
-    traced = trace_scenario(
-        _with_feature(lambda obs, ctx: abs(obs[V.ROLL]) * 0.5 - obs[V.PITCH] / 2.0)
-    )
+    """Arithmetic and abs are traceable operators; the traced column must match
+    the float path for both a negative and a positive roll."""
+    fn = lambda obs, ctx: abs(obs[V.ROLL]) * 0.5 - obs[V.PITCH] / 2.0
+    traced = trace_scenario(_with_feature(fn))
     assert "roll" in [p.name for p in traced.inputs]
+
+    rows = {
+        "altitude": [5000.0, 5000.0],
+        "heading": [10.0, 10.0],
+        "roll": [-30.0, 30.0],
+        "pitch": [5.0, -5.0],
+        "target_altitude_ft": [5000.0, 5000.0],
+        "target_heading_deg": [10.0, 10.0],
+    }
+    columns = [torch.as_tensor(rows[p.name], dtype=torch.float32) for p in traced.inputs]
+    got = traced.features.values(*columns)[:, -1]
+    want = torch.as_tensor(
+        [fn({V.ROLL: rows["roll"][i], V.PITCH: rows["pitch"][i]}, {}) for i in range(2)],
+        dtype=torch.float32,
+    )
+    torch.testing.assert_close(got, want)
 
 
 def test_a_feature_reading_an_undeclared_target_names_both():

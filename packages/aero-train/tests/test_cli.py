@@ -428,7 +428,11 @@ def test_export_writes_where_output_says_creating_the_directory(toy_checkpoint, 
     assert not toy_checkpoint.with_suffix(".onnx").exists()
 
 
-def test_export_refuses_a_gymnasium_checkpoint_before_building_anything(tmp_path):
+def test_export_refuses_a_gymnasium_checkpoint_before_building_anything(monkeypatch, tmp_path):
+    def no_env(env_cfg):
+        raise AssertionError("no env should be built")
+
+    monkeypatch.setattr(cli, "make_env_fn", no_env)
     path = _write_checkpoint(tmp_path, env={"id": "CartPole-v1"}, n_obs=4, n_actions=2)
     with pytest.raises(ValueError, match="canonical names"):
         cli.main(["export", str(path)])

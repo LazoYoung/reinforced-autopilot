@@ -15,12 +15,13 @@ reproducible, resumable and observable.
 Deliberately out of scope: offline RL, model-based RL and multi-agent training
 (the abstractions must not preclude them, but nothing is built for them);
 hyperparameter search orchestration, since CLI overrides are enough to drive an
-external sweeper; and serving a trained policy beyond `autopilot eval`.
+external sweeper; and serving a trained policy: `autopilot export` writes one self-contained
+policy file ([policy-file.md](policy-file.md)), and running it is a host's job.
 
 ## Two packages, one dependency rule
 
 `aero-train` depends on `aero-gym`. The reverse never holds, and inside
-`aero_train` only `envs/factory.py` imports `aero_gym`, function locally.
+`aero_train` only `aero_train.envs` imports `aero_gym`, function locally.
 Everything else talks to Gymnasium's API alone.
 
 This is not purity for its own sake: it is what makes the CartPole integration
@@ -29,7 +30,7 @@ stack is correct. A bug in DQN and a bug in the flight model are otherwise
 indistinguishable when a flight run fails to learn.
 
 The split also keeps the environment cheap to install. `aero-train` pulls in
-torch and mlflow; `aero-gym` needs only gymnasium, jsbsim and numpy.
+torch and mlflow; `aero-gym` needs only gymnasium, jsbsim and numpy. Export's ONNX packages sit behind an extra, `aero-train[export]`.
 
 ## Experience is a segment, not a flat transition
 

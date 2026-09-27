@@ -131,6 +131,13 @@ class ObservationFeature:
             lambda obs, context: obs[FlightVariable.ALTITUDE]
             - context["target_altitude_ft"],
         )
+
+    `fn` runs on floats in the environment and on torch tensors when a policy
+    is exported, so it may use arithmetic operators and `abs` only: no
+    `math.*`, no `float()`, no branching on a value (which includes the
+    builtin `min` and `max`), no in-place update of a reading such as
+    `x -= 1.0`, and no state kept between calls. `autopilot export` names a
+    feature that breaks this.
     """
 
     name: str

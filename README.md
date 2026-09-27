@@ -48,6 +48,14 @@ uv run autopilot eval runs/dqn-cartpole/checkpoints/best.pt --flightgear
 Every run keeps `latest.pt` and `best.pt` (by evaluation return). Prefer `best.pt`: DQN can
 reach a good policy and then lose it.
 
+A flight policy exports to one self-contained ONNX file, checked against its checkpoint
+before it is kept. [`docs/policy-file.md`](docs/policy-file.md) is the file's contract for
+a host.
+
+```sh
+uv run autopilot export runs/dqn-steady-flight/v4/best.pt   # writes best.onnx beside it
+```
+
 ## Quick start: use the environment directly
 
 ```python

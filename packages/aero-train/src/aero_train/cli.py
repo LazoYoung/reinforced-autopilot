@@ -126,11 +126,15 @@ def cmd_export(args: argparse.Namespace) -> int:
             "export needs an aero_gym scenario env; this checkpoint was trained on "
             f"Gymnasium env {cfg.env.id!r}, whose observations have no canonical names"
         )
-    env_fn = make_env_fn(cfg.env)
+    # Headless and on the CPU: the check only flies an episode, so a stored
+    # viewer or GPU setting must not make export launch FlightGear or need CUDA.
+    env_fn = make_env_fn(dataclasses.replace(cfg.env, render_mode=None))
     obs_space, act_space = _spaces(env_fn)
-    algo = build_algorithm(cfg, obs_space, act_space)
+    algo = build_algorithm(dataclasses.replace(cfg, device="cpu"), obs_space, act_space)
     algo.load_state_dict(payload["algo"])
     output = Path(args.output) if args.output else Path(args.checkpoint).with_suffix(".onnx")
+    if output.is_dir():
+        output = output / Path(args.checkpoint).with_suffix(".onnx").name
     report = export_policy(
         output,
         algo,
@@ -225,7 +229,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         default=None,
-        help="where to write it; default: the checkpoint's name with .onnx, beside it",
+        help="where to write it; default: the checkpoint's name with .onnx, beside it; "
+        "an existing directory gets the checkpoint's name with .onnx inside it",
     )
     ex.set_defaults(func=cmd_export)
 

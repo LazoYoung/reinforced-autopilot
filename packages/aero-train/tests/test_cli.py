@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import textwrap
@@ -141,7 +142,14 @@ class _ScriptedEnv(gym.Env):
 
 
 def _write_checkpoint(
-    tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81, algo: dict | None = None
+    tmp_path,
+    env: dict,
+    n_obs: int = 12,
+    n_actions: int = 81,
+    algo: dict | None = None,
+    device: str | None = None,
+    global_step: int = 0,
+    frames: int = 0,
 ):
     """A checkpoint for an arbitrary env config, without running a training loop."""
     from aero_train.algo import build_algorithm
@@ -158,10 +166,13 @@ def _write_checkpoint(
                 "warmup_frames": 16, "batch_size": 8},
             "rollout": {"engine": "local", "envs_per_worker": 1, "frames_per_iter": 8},
             "tracking": {"enabled": False},
+            **({"device": device} if device is not None else {}),
         }
     )
+    # Built on cpu regardless of cfg.device: load_checkpoint always maps
+    # tensors back to cpu, so a saved state dict is cpu-shaped either way.
     algo = build_algorithm(
-        cfg,
+        dataclasses.replace(cfg, device="cpu"),
         gym.spaces.Box(-1.0, 1.0, (n_obs,), np.float32),
         gym.spaces.Discrete(n_actions),
     )
@@ -171,8 +182,8 @@ def _write_checkpoint(
         {
             "config": config_to_dict(cfg),
             "algo": algo.state_dict(),
-            "global_step": 0,
-            "frames": 0,
+            "global_step": global_step,
+            "frames": frames,
             "best_return": float("-inf"),
             "buffer": None,
         },
@@ -404,7 +415,12 @@ def toy_checkpoint(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli, "make_env_fn", lambda env_cfg: toy_env_fn())
     return _write_checkpoint(
-        tmp_path, env={"scenario": "steady_flight"}, n_obs=N_FEATURES, n_actions=N_ACTIONS
+        tmp_path,
+        env={"scenario": "steady_flight"},
+        n_obs=N_FEATURES,
+        n_actions=N_ACTIONS,
+        global_step=3,
+        frames=7,
     )
 
 
@@ -417,8 +433,32 @@ def test_export_writes_beside_the_checkpoint_and_says_what_it_checked(toy_checkp
     config = load_checkpoint(toy_checkpoint)["config"]
     # Through JSON on both sides: the checkpoint keeps tuples, JSON reads back lists.
     assert json.loads(meta["aero.config"]) == json.loads(json.dumps(config))
-    assert meta["aero.frames"] == "0"
+    assert meta["aero.frames"] == "7"
     assert "steps checked" in capsys.readouterr().out
+
+
+def test_export_builds_a_headless_cpu_env_and_algorithm(monkeypatch, tmp_path):
+    """A checkpoint trained with a viewer and on CUDA must still export
+    headlessly and on the CPU: the check only flies an episode, it never
+    needs a display or a GPU."""
+    from tests.flight_fakes import N_ACTIONS, N_FEATURES, toy_env_fn
+
+    seen = {}
+
+    def fake_make_env_fn(env_cfg):
+        seen["render_mode"] = env_cfg.render_mode
+        return toy_env_fn()
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    path = _write_checkpoint(
+        tmp_path,
+        env={"scenario": "steady_flight", "render_mode": "flightgear"},
+        n_obs=N_FEATURES,
+        n_actions=N_ACTIONS,
+        device="cuda",
+    )
+    assert cli.main(["export", str(path)]) == 0
+    assert seen["render_mode"] is None
 
 
 def test_export_writes_where_output_says_creating_the_directory(toy_checkpoint, tmp_path):
@@ -426,6 +466,15 @@ def test_export_writes_where_output_says_creating_the_directory(toy_checkpoint, 
     assert cli.main(["export", str(toy_checkpoint), "-o", str(target)]) == 0
     assert target.exists()
     assert not toy_checkpoint.with_suffix(".onnx").exists()
+
+
+def test_export_writes_the_checkpoint_stem_into_an_existing_output_directory(
+    toy_checkpoint, tmp_path
+):
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    assert cli.main(["export", str(toy_checkpoint), "-o", str(out_dir)]) == 0
+    assert (out_dir / "ckpt.onnx").exists()
 
 
 def test_export_refuses_a_gymnasium_checkpoint_before_building_anything(monkeypatch, tmp_path):

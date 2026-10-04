@@ -500,3 +500,69 @@ def test_export_refuses_a_baseline(monkeypatch, tmp_path):
     )
     with pytest.raises(NotImplementedError, match="Random cannot be exported"):
         cli.main(["export", str(path)])
+
+
+# --- scenario fingerprint ----------------------------------------------------
+
+
+@pytest.fixture
+def toy_run(monkeypatch, tmp_path):
+    """Train the toy hold task through the CLI; returns (latest checkpoint, set_scenario).
+
+    `set_scenario(s)` makes every later CLI command build toy envs from `s`.
+    """
+    from tests.flight_fakes import toy_env_fn
+
+    def set_scenario(scenario):
+        monkeypatch.setattr(cli, "make_env_fn", lambda env_cfg: toy_env_fn(scenario))
+
+    set_scenario(None)
+    path = tmp_path / "toy.yaml"
+    config = textwrap.dedent(CONFIG).format(ckpt=tmp_path / "ckpt")
+    path.write_text(config.replace("id: CartPole-v1", "scenario: steady_flight"))
+    assert cli.main(["train", str(path)]) == 0
+    return tmp_path / "ckpt" / "latest.pt", set_scenario
+
+
+def test_train_stores_the_scenario_fingerprint_in_its_checkpoints(toy_run):
+    from tests.flight_fakes import toy_fingerprint
+
+    latest, _ = toy_run
+    assert load_checkpoint(latest)["scenario_fingerprint"] == toy_fingerprint()
+
+
+def test_a_gymnasium_run_stores_no_fingerprint(config_path, tmp_path):
+    assert cli.main(["train", str(config_path)]) == 0
+    assert load_checkpoint(tmp_path / "ckpt" / "latest.pt")["scenario_fingerprint"] is None
+
+
+def test_resume_refuses_a_scenario_whose_feature_changed(toy_run):
+    from tests.flight_fakes import flipped_toy_scenario
+
+    latest, set_scenario = toy_run
+    before = load_checkpoint(latest)
+    set_scenario(flipped_toy_scenario())
+    with pytest.raises(ValueError, match=r"cannot resume.*altitude_error_ft changed"):
+        cli.main(["resume", str(latest), "--total-steps", "128"])
+    assert load_checkpoint(latest)["frames"] == before["frames"]
+
+
+def test_resume_accepts_a_reward_change_and_keeps_the_fingerprint(toy_run):
+    from tests.flight_fakes import toy_fingerprint, toy_scenario
+
+    latest, set_scenario = toy_run
+    set_scenario(toy_scenario(reward_fn=lambda t: (0.5, False)))
+    assert cli.main(["resume", str(latest), "--total-steps", "128"]) == 0
+    payload = load_checkpoint(latest)
+    assert payload["frames"] > 64
+    assert payload["scenario_fingerprint"] == toy_fingerprint()
+
+
+def test_a_resumed_checkpoint_without_a_fingerprint_stays_without_one(toy_run):
+    """Resume must not vouch for a scenario nobody recorded at training time."""
+    latest, _ = toy_run
+    payload = load_checkpoint(latest)
+    payload.pop("scenario_fingerprint")
+    save_checkpoint(latest, payload)
+    assert cli.main(["resume", str(latest), "--total-steps", "128"]) == 0
+    assert load_checkpoint(latest)["scenario_fingerprint"] is None

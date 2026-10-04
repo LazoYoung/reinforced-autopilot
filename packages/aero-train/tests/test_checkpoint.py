@@ -158,3 +158,16 @@ def test_a_checkpoint_restores_a_fresh_algorithm(tmp_path):
     restored.load_state_dict(load_checkpoint(mgr.latest_path)["algo"])
     assert restored.global_step == 42
     assert all(torch.allclose(p, torch.full_like(p, 0.25)) for p in restored.net.parameters())
+
+
+def test_a_checkpoint_carries_the_scenario_fingerprint_it_was_given(tmp_path):
+    fingerprint = {"version": 1, "aircraft": "c172p"}
+    mgr = CheckpointManager(tmp_path, CheckpointConfig(), scenario_fingerprint=fingerprint)
+    mgr.save(config=make_cfg(), algo=make_algo(), frames=1)
+    assert load_checkpoint(mgr.latest_path)["scenario_fingerprint"] == fingerprint
+
+
+def test_a_checkpoint_without_a_fingerprint_says_so(tmp_path):
+    mgr = CheckpointManager(tmp_path, CheckpointConfig())
+    mgr.save(config=make_cfg(), algo=make_algo(), frames=1)
+    assert load_checkpoint(mgr.latest_path)["scenario_fingerprint"] is None

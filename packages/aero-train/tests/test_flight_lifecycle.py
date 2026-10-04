@@ -80,6 +80,8 @@ def test_a_flight_run_survives_start_checkpoint_resume_and_eval(tmp_path, capsys
     assert cli.main(["resume", str(latest), "--total-steps", "1024"]) == 0
     second = load_checkpoint(latest)
     assert second["frames"] > first["frames"]
+    assert first["scenario_fingerprint"] is not None
+    assert second["scenario_fingerprint"] == first["scenario_fingerprint"]
     assert second["config"]["env"]["scenario"] == "steady_flight"
 
     assert cli.main(["eval", str(latest), "--episodes", "2"]) == 0

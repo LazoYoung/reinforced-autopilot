@@ -8,6 +8,8 @@ import json
 import os
 import shutil
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import gymnasium as gym
@@ -15,20 +17,49 @@ import gymnasium as gym
 from .algo import build_algorithm
 from .checkpoint import CheckpointManager, load_checkpoint
 from .config import TrainConfig, config_from_dict, load_config
-from .envs import make_env_fn, observation_saturation_report
+from .envs import (
+    Fingerprint,
+    fingerprint_difference,
+    make_env_fn,
+    observation_saturation_report,
+    scenario_fingerprint,
+)
 from .export import export_policy
 from .rollout import build_engine
 from .tracking import build_tracker
 from .trainer import Trainer, evaluate_policy
 
 
-def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
-    """Probe one throwaway env for its spaces before building the algorithm."""
-    probe = env_fn()
+@contextmanager
+def _probe(env_fn) -> Iterator[gym.Env]:
+    """One throwaway env, for its spaces and its scenario, before anything is built."""
+    env = env_fn()
     try:
-        return probe.observation_space, probe.action_space
+        yield env
     finally:
-        probe.close()
+        env.close()
+
+
+def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
+    with _probe(env_fn) as env:
+        return env.observation_space, env.action_space
+
+
+def _verified(payload: dict, env: gym.Env, verb: str) -> Fingerprint | None:
+    """The checkpoint's scenario fingerprint, once `env`'s scenario is shown to match it.
+
+    None when the checkpoint has none: a Gymnasium run, or one written before
+    fingerprints existed.
+    """
+    stored = payload.get("scenario_fingerprint")
+    if stored is not None:
+        difference = fingerprint_difference(stored, env)
+        if difference is not None:
+            raise ValueError(
+                f"cannot {verb}: the scenario changed since this checkpoint was trained "
+                f"({difference}); {verb} it with the code it was trained on"
+            )
+    return stored
 
 
 def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
@@ -40,7 +71,14 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
         if cfg.env.render_mode is None
         else make_env_fn(dataclasses.replace(cfg.env, render_mode=None))
     )
-    obs_space, act_space = _spaces(env_fn)
+    with _probe(env_fn) as probe:
+        obs_space, act_space = probe.observation_space, probe.action_space
+        # A resumed run keeps the fingerprint it started with, or none at all.
+        fingerprint = (
+            scenario_fingerprint(probe)
+            if resume_from is None
+            else _verified(resume_from, probe, "resume")
+        )
     algo = build_algorithm(cfg, obs_space, act_space)
     frames = 0
     best_return = float("-inf")
@@ -55,7 +93,12 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
 
     engine = build_engine(cfg.rollout, env_fn, algo.make_agent(), cfg.seed)
     tracker = build_tracker(cfg)
-    checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint, best_return=best_return)
+    checkpoints = CheckpointManager(
+        cfg.checkpoint.dir,
+        cfg.checkpoint,
+        best_return=best_return,
+        scenario_fingerprint=fingerprint,
+    )
     trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=eval_env_fn)
     trainer.frames = frames
     trainer.run()

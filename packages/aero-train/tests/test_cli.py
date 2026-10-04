@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 import textwrap
 
@@ -139,7 +141,17 @@ class _ScriptedEnv(gym.Env):
         return np.zeros(self.observation_space.shape, np.float32), 1.0, True, False, {}
 
 
-def _write_checkpoint(tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81):
+def _write_checkpoint(
+    tmp_path,
+    env: dict,
+    n_obs: int = 12,
+    n_actions: int = 81,
+    algo: dict | None = None,
+    device: str | None = None,
+    global_step: int = 0,
+    frames: int = 0,
+    fingerprint: dict | None = None,
+):
     """A checkpoint for an arbitrary env config, without running a training loop."""
     from aero_train.algo import build_algorithm
     from aero_train.config import config_from_dict, config_to_dict
@@ -150,14 +162,18 @@ def _write_checkpoint(tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81)
             "seed": 0,
             "total_steps": 64,
             "env": env,
-            "algo": {"type": "dqn", "hidden_sizes": [8], "buffer_size": 200,
-                     "warmup_frames": 16, "batch_size": 8},
+            "algo": algo
+            or {"type": "dqn", "hidden_sizes": [8], "buffer_size": 200,
+                "warmup_frames": 16, "batch_size": 8},
             "rollout": {"engine": "local", "envs_per_worker": 1, "frames_per_iter": 8},
             "tracking": {"enabled": False},
+            **({"device": device} if device is not None else {}),
         }
     )
+    # Built on cpu regardless of cfg.device: load_checkpoint always maps
+    # tensors back to cpu, so a saved state dict is cpu-shaped either way.
     algo = build_algorithm(
-        cfg,
+        dataclasses.replace(cfg, device="cpu"),
         gym.spaces.Box(-1.0, 1.0, (n_obs,), np.float32),
         gym.spaces.Discrete(n_actions),
     )
@@ -167,10 +183,11 @@ def _write_checkpoint(tmp_path, env: dict, n_obs: int = 12, n_actions: int = 81)
         {
             "config": config_to_dict(cfg),
             "algo": algo.state_dict(),
-            "global_step": 0,
-            "frames": 0,
+            "global_step": global_step,
+            "frames": frames,
             "best_return": float("-inf"),
             "buffer": None,
+            "scenario_fingerprint": fingerprint,
         },
     )
     return path
@@ -388,3 +405,221 @@ def test_training_with_a_viewer_builds_its_eval_env_without_one(monkeypatch, tmp
     assert cli.main(["train", str(path)]) == 0
     assert "flightgear" in render_modes, "the training env must keep its viewer"
     assert captured["eval_env_fn"].render_mode is None
+
+
+# --- autopilot export --------------------------------------------------------
+
+
+@pytest.fixture
+def toy_checkpoint(monkeypatch, tmp_path):
+    """A flight checkpoint whose env is the toy hold task rather than JSBSim."""
+    from tests.flight_fakes import N_ACTIONS, N_FEATURES, toy_env_fn, toy_fingerprint
+
+    monkeypatch.setattr(cli, "make_env_fn", lambda env_cfg: toy_env_fn())
+    return _write_checkpoint(
+        tmp_path,
+        env={"scenario": "steady_flight"},
+        n_obs=N_FEATURES,
+        n_actions=N_ACTIONS,
+        global_step=3,
+        frames=7,
+        fingerprint=toy_fingerprint(),
+    )
+
+
+def test_export_writes_beside_the_checkpoint_and_says_what_it_checked(toy_checkpoint, capsys):
+    import onnx
+    from aero_gym.registry import build_scenario
+
+    assert cli.main(["export", str(toy_checkpoint)]) == 0
+    written = toy_checkpoint.with_suffix(".onnx")
+    meta = {p.key: p.value for p in onnx.load(str(written)).metadata_props}
+    config = load_checkpoint(toy_checkpoint)["config"]
+    # Through JSON on both sides: the checkpoint keeps tuples, JSON reads back lists.
+    assert json.loads(meta["aero.config"]) == json.loads(json.dumps(config))
+    assert meta["aero.frames"] == "7"
+    assert meta["aero.scenario"] == "steady_flight"
+    params = json.loads(meta["aero.config"])["env"]["params"]
+    assert build_scenario(meta["aero.scenario"], params).name == "steady-flight"
+    assert "steps checked" in capsys.readouterr().out
+
+
+def test_export_builds_a_headless_cpu_env_and_algorithm(monkeypatch, tmp_path):
+    """A checkpoint trained with a viewer and on CUDA must still export
+    headlessly and on the CPU: the check only flies an episode, it never
+    needs a display or a GPU."""
+    from tests.flight_fakes import N_ACTIONS, N_FEATURES, toy_env_fn, toy_fingerprint
+
+    seen = {}
+
+    def fake_make_env_fn(env_cfg):
+        seen["render_mode"] = env_cfg.render_mode
+        return toy_env_fn()
+
+    monkeypatch.setattr(cli, "make_env_fn", fake_make_env_fn)
+    path = _write_checkpoint(
+        tmp_path,
+        env={"scenario": "steady_flight", "render_mode": "flightgear"},
+        n_obs=N_FEATURES,
+        n_actions=N_ACTIONS,
+        device="cuda",
+        fingerprint=toy_fingerprint(),
+    )
+    assert cli.main(["export", str(path)]) == 0
+    assert seen["render_mode"] is None
+
+
+def test_export_writes_where_output_says_creating_the_directory(toy_checkpoint, tmp_path):
+    target = tmp_path / "exports" / "v1.onnx"
+    assert cli.main(["export", str(toy_checkpoint), "-o", str(target)]) == 0
+    assert target.exists()
+    assert not toy_checkpoint.with_suffix(".onnx").exists()
+
+
+def test_export_writes_the_checkpoint_stem_into_an_existing_output_directory(
+    toy_checkpoint, tmp_path
+):
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    assert cli.main(["export", str(toy_checkpoint), "-o", str(out_dir)]) == 0
+    assert (out_dir / "ckpt.onnx").exists()
+
+
+def test_export_refuses_a_gymnasium_checkpoint_before_building_anything(monkeypatch, tmp_path):
+    def no_env(env_cfg):
+        raise AssertionError("no env should be built")
+
+    monkeypatch.setattr(cli, "make_env_fn", no_env)
+    path = _write_checkpoint(tmp_path, env={"id": "CartPole-v1"}, n_obs=4, n_actions=2)
+    with pytest.raises(ValueError, match="canonical names"):
+        cli.main(["export", str(path)])
+
+
+def test_export_refuses_a_baseline(monkeypatch, tmp_path):
+    from tests.flight_fakes import N_ACTIONS, toy_env_fn, toy_fingerprint
+
+    monkeypatch.setattr(cli, "make_env_fn", lambda env_cfg: toy_env_fn())
+    path = _write_checkpoint(
+        tmp_path,
+        env={"scenario": "steady_flight"},
+        n_actions=N_ACTIONS,
+        algo={"type": "random"},
+        fingerprint=toy_fingerprint(),
+    )
+    with pytest.raises(NotImplementedError, match="Random cannot be exported"):
+        cli.main(["export", str(path)])
+
+
+# --- scenario fingerprint ----------------------------------------------------
+
+
+@pytest.fixture
+def toy_run(monkeypatch, tmp_path):
+    """Train the toy hold task through the CLI; returns (latest checkpoint, set_scenario).
+
+    `set_scenario(s)` makes every later CLI command build toy envs from `s`.
+    """
+    from tests.flight_fakes import toy_env_fn
+
+    def set_scenario(scenario):
+        monkeypatch.setattr(cli, "make_env_fn", lambda env_cfg: toy_env_fn(scenario))
+
+    set_scenario(None)
+    path = tmp_path / "toy.yaml"
+    config = textwrap.dedent(CONFIG).format(ckpt=tmp_path / "ckpt")
+    path.write_text(config.replace("id: CartPole-v1", "scenario: steady_flight"))
+    assert cli.main(["train", str(path)]) == 0
+    return tmp_path / "ckpt" / "latest.pt", set_scenario
+
+
+def test_train_stores_the_scenario_fingerprint_in_its_checkpoints(toy_run):
+    from tests.flight_fakes import toy_fingerprint
+
+    latest, _ = toy_run
+    assert load_checkpoint(latest)["scenario_fingerprint"] == toy_fingerprint()
+
+
+def test_a_gymnasium_run_stores_no_fingerprint(config_path, tmp_path):
+    assert cli.main(["train", str(config_path)]) == 0
+    assert load_checkpoint(tmp_path / "ckpt" / "latest.pt")["scenario_fingerprint"] is None
+
+
+def test_resume_refuses_a_scenario_whose_feature_changed(toy_run):
+    from tests.flight_fakes import flipped_toy_scenario
+
+    latest, set_scenario = toy_run
+    before = latest.read_bytes()
+    set_scenario(flipped_toy_scenario())
+    with pytest.raises(ValueError, match=r"cannot resume.*altitude_error_ft changed"):
+        cli.main(["resume", str(latest), "--total-steps", "128"])
+    assert latest.read_bytes() == before
+
+
+def test_resume_accepts_a_reward_change_and_keeps_the_fingerprint(toy_run):
+    from tests.flight_fakes import toy_fingerprint, toy_scenario
+
+    latest, set_scenario = toy_run
+    set_scenario(toy_scenario(reward_fn=lambda t: (0.5, False)))
+    assert cli.main(["resume", str(latest), "--total-steps", "128"]) == 0
+    payload = load_checkpoint(latest)
+    assert payload["frames"] > 64
+    assert payload["scenario_fingerprint"] == toy_fingerprint()
+
+
+def test_a_resumed_checkpoint_without_a_fingerprint_stays_without_one(toy_run, capsys):
+    """Resume must not vouch for a scenario nobody recorded at training time."""
+    latest, _ = toy_run
+    payload = load_checkpoint(latest)
+    payload.pop("scenario_fingerprint")
+    save_checkpoint(latest, payload)
+    assert cli.main(["resume", str(latest), "--total-steps", "128"]) == 0
+    assert load_checkpoint(latest)["scenario_fingerprint"] is None
+    assert "carries no scenario fingerprint" in capsys.readouterr().err
+
+
+def test_resuming_a_gymnasium_run_prints_no_fingerprint_note(config_path, tmp_path, capsys):
+    cli.main(["train", str(config_path)])
+    capsys.readouterr()
+    cli.main(["resume", str(tmp_path / "ckpt" / "latest.pt"), "--total-steps", "128"])
+    assert "fingerprint" not in capsys.readouterr().err
+
+
+def test_export_refuses_a_scenario_changed_since_training_and_writes_nothing(toy_run):
+    from tests.flight_fakes import flipped_toy_scenario
+
+    latest, set_scenario = toy_run
+    set_scenario(flipped_toy_scenario())
+    with pytest.raises(ValueError, match=r"cannot export.*altitude_error_ft changed"):
+        cli.main(["export", str(latest)])
+    assert not latest.with_suffix(".onnx").exists()
+
+
+def test_export_accepts_a_reward_change(toy_run):
+    from tests.flight_fakes import toy_scenario
+
+    latest, set_scenario = toy_run
+    set_scenario(toy_scenario(reward_fn=lambda t: (0.5, False)))
+    assert cli.main(["export", str(latest)]) == 0
+    assert latest.with_suffix(".onnx").exists()
+
+
+def test_export_refuses_a_checkpoint_without_a_fingerprint_naming_the_flag(
+    toy_checkpoint, tmp_path
+):
+    payload = load_checkpoint(toy_checkpoint)
+    payload.pop("scenario_fingerprint")
+    save_checkpoint(toy_checkpoint, payload)
+    with pytest.raises(ValueError, match="--unverified-scenario"):
+        cli.main(["export", str(toy_checkpoint)])
+    assert not toy_checkpoint.with_suffix(".onnx").exists()
+
+
+def test_unverified_scenario_exports_a_checkpoint_without_a_fingerprint_with_a_warning(
+    toy_checkpoint, capsys
+):
+    payload = load_checkpoint(toy_checkpoint)
+    payload.pop("scenario_fingerprint")
+    save_checkpoint(toy_checkpoint, payload)
+    assert cli.main(["export", str(toy_checkpoint), "--unverified-scenario"]) == 0
+    assert toy_checkpoint.with_suffix(".onnx").exists()
+    assert "no scenario fingerprint" in capsys.readouterr().err

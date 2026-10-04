@@ -1,12 +1,15 @@
-"""The `autopilot` command: run, resume, eval."""
+"""The `autopilot` command: train, resume, eval, export, mlflow."""
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import os
 import shutil
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import gymnasium as gym
@@ -14,19 +17,50 @@ import gymnasium as gym
 from .algo import build_algorithm
 from .checkpoint import CheckpointManager, load_checkpoint
 from .config import TrainConfig, config_from_dict, load_config
-from .envs import make_env_fn, observation_saturation_report
+from .envs import (
+    Fingerprint,
+    fingerprint_difference,
+    make_env_fn,
+    observation_saturation_report,
+    scenario_fingerprint,
+)
+from .export import export_policy
 from .rollout import build_engine
 from .tracking import build_tracker
 from .trainer import Trainer, evaluate_policy
 
 
-def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
-    """Probe one throwaway env for its spaces before building the algorithm."""
-    probe = env_fn()
+@contextmanager
+def _probe(env_fn) -> Generator[gym.Env]:
+    """One throwaway env, for its spaces and its scenario, before anything is built."""
+    env = env_fn()
     try:
-        return probe.observation_space, probe.action_space
+        yield env
     finally:
-        probe.close()
+        env.close()
+
+
+def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
+    """The observation and action spaces `env_fn` builds."""
+    with _probe(env_fn) as env:
+        return env.observation_space, env.action_space
+
+
+def _verified(payload: dict, env: gym.Env, verb: str) -> Fingerprint | None:
+    """The checkpoint's scenario fingerprint, once `env`'s scenario is shown to match it.
+
+    None when the checkpoint has none: a Gymnasium run, or one written before
+    fingerprints existed.
+    """
+    stored = payload.get("scenario_fingerprint")
+    if stored is not None:
+        difference = fingerprint_difference(stored, env)
+        if difference is not None:
+            raise ValueError(
+                f"cannot {verb}: the scenario changed since this checkpoint was trained "
+                f"({difference}); {verb} it with the code it was trained on"
+            )
+    return stored
 
 
 def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
@@ -38,7 +72,20 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
         if cfg.env.render_mode is None
         else make_env_fn(dataclasses.replace(cfg.env, render_mode=None))
     )
-    obs_space, act_space = _spaces(env_fn)
+    with _probe(env_fn) as probe:
+        obs_space, act_space = probe.observation_space, probe.action_space
+        # A resumed run keeps the fingerprint it started with, or none at all.
+        fingerprint = (
+            scenario_fingerprint(probe)
+            if resume_from is None
+            else _verified(resume_from, probe, "resume")
+        )
+        if resume_from is not None and fingerprint is None and scenario_fingerprint(probe):
+            print(
+                "note: this checkpoint carries no scenario fingerprint, so its checkpoints "
+                "stay unverified and export will need --unverified-scenario",
+                file=sys.stderr,
+            )
     algo = build_algorithm(cfg, obs_space, act_space)
     frames = 0
     best_return = float("-inf")
@@ -53,7 +100,12 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
 
     engine = build_engine(cfg.rollout, env_fn, algo.make_agent(), cfg.seed)
     tracker = build_tracker(cfg)
-    checkpoints = CheckpointManager(cfg.checkpoint.dir, cfg.checkpoint, best_return=best_return)
+    checkpoints = CheckpointManager(
+        cfg.checkpoint.dir,
+        cfg.checkpoint,
+        best_return=best_return,
+        scenario_fingerprint=fingerprint,
+    )
     trainer = Trainer(cfg, algo, engine, tracker, checkpoints, eval_env_fn=eval_env_fn)
     trainer.frames = frames
     trainer.run()
@@ -113,6 +165,50 @@ def cmd_eval(args: argparse.Namespace) -> int:
         f"terminated {report.terminated_frac:.0%}"
     )
     _report_saturation()
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    payload = load_checkpoint(Path(args.checkpoint))
+    cfg = config_from_dict(payload["config"])
+    if cfg.env.scenario is None:
+        raise ValueError(
+            "export needs an aero_gym scenario env; this checkpoint was trained on "
+            f"Gymnasium env {cfg.env.id!r}, whose observations have no canonical names"
+        )
+    # Headless and on the CPU: the check only flies an episode, so a stored
+    # viewer or GPU setting must not make export launch FlightGear or need CUDA.
+    env_fn = make_env_fn(dataclasses.replace(cfg.env, render_mode=None))
+    with _probe(env_fn) as probe:
+        obs_space, act_space = probe.observation_space, probe.action_space
+        if _verified(payload, probe, "export") is None:
+            if not args.unverified_scenario:
+                raise ValueError(
+                    "checkpoint has no scenario fingerprint; "
+                    "pass --unverified-scenario to export with today's scenario code"
+                )
+            print(
+                "warning: no scenario fingerprint to check; the file reflects today's "
+                "scenario code, which may differ from the code this policy trained on",
+                file=sys.stderr,
+            )
+    algo = build_algorithm(dataclasses.replace(cfg, device="cpu"), obs_space, act_space)
+    algo.load_state_dict(payload["algo"])
+    output = Path(args.output) if args.output else Path(args.checkpoint).with_suffix(".onnx")
+    if output.is_dir():
+        output = output / Path(args.checkpoint).with_suffix(".onnx").name
+    report = export_policy(
+        output,
+        algo,
+        env_fn,
+        seed=cfg.seed,
+        metadata={
+            "aero.config": json.dumps(payload["config"], sort_keys=True),
+            "aero.frames": str(int(payload["frames"])),
+            "aero.scenario": cfg.env.scenario,
+        },
+    )
+    print(f"wrote {output}: {report.steps} steps checked, {report.flips} near-tie flips")
     return 0
 
 
@@ -189,6 +285,22 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--episodes", type=int, default=20)
     ev.add_argument("--flightgear", action="store_true")
     ev.set_defaults(func=cmd_eval)
+
+    ex = sub.add_parser("export", help="write a flight checkpoint's policy as one ONNX file")
+    ex.add_argument("checkpoint")
+    ex.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="where to write it; default: the checkpoint's name with .onnx, beside it; "
+        "an existing directory gets the checkpoint's name with .onnx inside it",
+    )
+    ex.add_argument(
+        "--unverified-scenario",
+        action="store_true",
+        help="export a checkpoint that has no scenario fingerprint, tracing today's code",
+    )
+    ex.set_defaults(func=cmd_export)
 
     ml = sub.add_parser("mlflow", help="launch `mlflow server` against the local run store")
     ml.add_argument("--port", type=int, default=5000)

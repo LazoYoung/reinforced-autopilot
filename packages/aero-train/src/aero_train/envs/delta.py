@@ -6,6 +6,10 @@ from collections.abc import Sequence
 
 import gymnasium as gym
 import numpy as np
+import torch
+from torch import nn
+
+from ..tensors import ActionIndex, Command
 
 
 class DeltaAction(gym.ActionWrapper):
@@ -68,6 +72,26 @@ class DeltaAction(gym.ActionWrapper):
         """The index whose every digit is 1, i.e. every axis unchanged."""
         return (int(self.action_space.n) - 1) // 2
 
+    @property
+    def command(self) -> np.ndarray:
+        """The accumulated command the next action steps from, as a copy.
+
+        What a policy file's prev.* inputs carry while this wrapper is flying.
+        """
+        return self._command.copy()
+
+    @property
+    def step_sizes(self) -> np.ndarray:
+        """One step on each axis in that axis's units: its delta times its span."""
+        return self._step.copy()
+
+    def to_torch(self) -> nn.Module:
+        """The step rule as a torch module, for export: (ActionIndex, Command) to Command.
+
+        Built from the arrays `action` uses, so the two cannot drift apart.
+        """
+        return _Step(self._low, self._high, self._step)
+
     def _deltas(self, index: int) -> np.ndarray:
         out = np.empty(self._n_axes, np.float32)
         for axis in range(self._n_axes):
@@ -93,3 +117,19 @@ class DeltaAction(gym.ActionWrapper):
             self._high,
         )
         return obs, info
+
+
+class _Step(nn.Module):
+    """DeltaAction.action over a batch: decode each index, step, clip."""
+
+    def __init__(self, low: np.ndarray, high: np.ndarray, step: np.ndarray) -> None:
+        super().__init__()
+        self.register_buffer("low", torch.as_tensor(low.copy()))
+        self.register_buffer("high", torch.as_tensor(high.copy()))
+        self.register_buffer("step", torch.as_tensor(step.copy()))
+        # Least significant digit first, as DeltaAction._deltas reads them.
+        self.register_buffer("radix", 3 ** torch.arange(len(step)))
+
+    def forward(self, action: ActionIndex, command: Command) -> Command:
+        digits = (action.unsqueeze(1) // self.radix) % 3 - 1
+        return torch.clamp(command + digits.to(command.dtype) * self.step, self.low, self.high)

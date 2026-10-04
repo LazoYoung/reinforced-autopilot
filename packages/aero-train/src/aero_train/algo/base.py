@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
+from torch import nn
 
 from ..primitives import Agent, Segment
 
@@ -60,3 +61,12 @@ class Algorithm(ABC):
 
     @abstractmethod
     def load_state_dict(self, sd: dict[str, Any]) -> None: ...
+
+    def policy_module(self) -> nn.Module:
+        """A frozen, greedy copy of the policy, for export.
+
+        Its forward maps a ScaledObservation to (ActionIndex, StateValue), acting
+        as greedy evaluation does, and it holds no state between calls. The
+        default raises: an algorithm with no policy network has nothing to export.
+        """
+        raise NotImplementedError(f"{type(self).__name__} cannot be exported")

@@ -39,8 +39,8 @@ Context = Mapping[str, float]
 
 Drawn alongside the initial conditions by the scenario's `setup_fn`, so a
 feature can measure against *this* episode's target rather than a number fixed
-when the scenario was built. Keys are the scenario's declared `context_keys`,
-which the environment validates at reset, for example
+when the scenario was built. Keys are the names of the scenario's
+`context_variables`, which the environment validates at reset, for example
 `context["target_altitude_ft"]`.
 """
 
@@ -131,6 +131,13 @@ class ObservationFeature:
             lambda obs, context: obs[FlightVariable.ALTITUDE]
             - context["target_altitude_ft"],
         )
+
+    `fn` runs on floats in the environment and on torch tensors when a policy
+    is exported, so it may use arithmetic operators and `abs` only: no
+    `math.*`, no `float()`, no branching on a value (which includes the
+    builtin `min` and `max`), no in-place update of a reading such as
+    `x -= 1.0`, and no state kept between calls. `autopilot export` names a
+    feature that breaks this.
     """
 
     name: str
@@ -158,6 +165,25 @@ def raw(
 
 
 @dataclass(frozen=True)
+class ContextVariable:
+    """One target the scenario's setup_fn draws each episode, with its unit and range.
+
+    The range is where setup_fn draws the target from, which makes it the range
+    a policy is trained on: the environment rejects a draw outside it, and a
+    host that lets a pilot set targets clamps them to it. A target that never
+    varies declares low == high.
+
+        ContextVariable(
+            "target_altitude_ft",
+            VariableSpec("ft", 4500.0, 5500.0, "altitude to hold, MSL"),
+        )
+    """
+
+    name: str
+    spec: VariableSpec
+
+
+@dataclass(frozen=True)
 class Scenario:
     """A fully-specified task for :class:`aero_gym.env.AeroGymEnv`."""
 
@@ -167,7 +193,7 @@ class Scenario:
     action_variables: tuple[FlightVariable, ...] = ALL_ACTION_VARIABLES
     observation_variables: tuple[FlightVariable, ...] = ALL_OBSERVATION_VARIABLES
     observation_features: tuple[ObservationFeature, ...] = ()
-    context_keys: tuple[str, ...] = ()
+    context_variables: tuple[ContextVariable, ...] = ()
     aircraft: str = "c172p"
     agent_hz: float = 10.0
     max_episode_steps: int | None = 2000
@@ -218,3 +244,6 @@ class Scenario:
         names = [f.name for f in self.observation_features]
         if len(set(names)) != len(names):
             raise ValueError(f"duplicate observation feature names: {sorted(names)}")
+        targets = [c.name for c in self.context_variables]
+        if len(set(targets)) != len(targets):
+            raise ValueError(f"duplicate context variable names: {sorted(targets)}")

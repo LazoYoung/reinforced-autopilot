@@ -4,6 +4,7 @@ from .env import AeroGymEnv
 from .scenario import (
     Action,
     Context,
+    ContextVariable,
     EpisodeSetup,
     InitialConditions,
     Observation,
@@ -21,6 +22,7 @@ __all__ = [
     "AeroGymEnv",
     "Action",
     "Context",
+    "ContextVariable",
     "EpisodeSetup",
     "FlightVariable",
     "InitialConditions",

@@ -36,8 +36,8 @@ def _make_scenario_env_fn(cfg: EnvConfig) -> Callable[[], gym.Env]:
 
     aero_gym is imported here, not at module scope, so the Gymnasium branch
     never loads it and the CartPole integration test stays honest proof that
-    the learning stack runs with no flight model near it. This module is the
-    only place in aero_train allowed the import (tests/test_dependency_rules).
+    the learning stack runs with no flight model near it. aero_train.envs is
+    the only place in aero_train allowed the import (tests/test_dependency_rules).
 
     The registration and the params object are resolved eagerly, here, and only
     registration.build() is deferred into the returned callable, because each

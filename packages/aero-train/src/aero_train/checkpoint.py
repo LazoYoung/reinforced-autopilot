@@ -59,6 +59,7 @@ class CheckpointManager:
         cfg: CheckpointConfig,
         *,
         best_return: float = float("-inf"),
+        scenario_fingerprint: dict[str, Any] | None = None,
     ) -> None:
         self.dir = Path(directory)
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -66,6 +67,7 @@ class CheckpointManager:
         # Resuming callers pass the prior run's value. At the default, a manager
         # pointed at an existing best.pt clobbers it on the first eval.
         self.best_return = float(best_return)
+        self.scenario_fingerprint = scenario_fingerprint
 
     @property
     def latest_path(self) -> Path:
@@ -97,6 +99,7 @@ class CheckpointManager:
             # Persisted to seed a resumed manager; without it resume restarts at
             # -inf and the first eval overwrites best.pt.
             "best_return": self.best_return,
+            "scenario_fingerprint": self.scenario_fingerprint,
             # a 1e5-frame buffer is large and most resumes do not need bit-exact
             # buffer contents, so it is opt-in
             "buffer": buffer.state_dict()

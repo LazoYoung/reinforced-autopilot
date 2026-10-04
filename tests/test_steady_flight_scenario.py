@@ -140,6 +140,57 @@ def test_airspeed_jitter_rides_on_the_aircrafts_cruise_not_a_constant():
     assert all(270.0 <= kts <= 290.0 for kts in speeds)
 
 
+def _declared(scenario):
+    return {c.name: (c.spec.low, c.spec.high) for c in scenario.context_variables}
+
+
+def test_the_declared_targets_are_exactly_what_setup_fn_draws():
+    scenario = make_steady_flight_scenario()
+    setup = scenario.setup_fn(np.random.default_rng(0))
+    assert list(_declared(scenario)) == list(setup.context)
+
+
+def test_a_declared_range_is_the_base_plus_or_minus_its_jitter():
+    """The range a mode control panel clamps its dials to: the trained one, no wider."""
+    scenario = make_steady_flight_scenario(
+        SteadyFlightParams(altitude_jitter_ft=500.0, airspeed_jitter_kts=20.0)
+    )
+    declared = _declared(scenario)
+    assert declared["target_altitude_ft"] == (4500.0, 5500.0)
+    assert declared["target_airspeed_kts"] == (75.0, 115.0)
+    assert declared["target_heading_deg"] == (0.0, 360.0)
+
+
+def test_without_jitter_a_declared_range_is_the_one_value_trained_on():
+    declared = _declared(make_steady_flight_scenario())
+    assert declared["target_altitude_ft"] == (5000.0, 5000.0)
+    assert declared["target_airspeed_kts"] == (95.0, 95.0)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        SteadyFlightParams(),
+        SteadyFlightParams(
+            altitude_jitter_ft=500.0, heading_jitter_deg=20.0, airspeed_jitter_kts=20.0
+        ),
+        SteadyFlightParams(
+            aircraft="737", heading_deg=350.0, heading_jitter_deg=30.0, airspeed_jitter_kts=10.0
+        ),
+    ],
+    ids=["default", "jittered", "737-across-north"],
+)
+def test_every_draw_lies_inside_its_declared_range(params):
+    """737-across-north wraps past 360, which a heading range of base plus or
+    minus jitter would reject."""
+    scenario = make_steady_flight_scenario(params)
+    rng = np.random.default_rng(0)
+    for _ in range(500):
+        context = scenario.setup_fn(rng).context
+        for name, (low, high) in _declared(scenario).items():
+            assert low <= context[name] <= high, (name, context[name])
+
+
 def test_a_negative_jitter_is_rejected():
     with pytest.raises(ValueError, match="altitude_jitter_ft"):
         SteadyFlightParams(altitude_jitter_ft=-10.0)

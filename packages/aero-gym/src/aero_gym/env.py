@@ -63,13 +63,21 @@ class AeroGymEnv(gym.Env):
             self.simulator.enable_visualization()
             self._visualization_started = True
         setup = self.scenario.setup_fn(self.np_random)
-        missing = [k for k in self.scenario.context_keys if k not in setup.context]
+        declared = self.scenario.context_variables
+        missing = [c.name for c in declared if c.name not in setup.context]
         if missing:
             raise KeyError(
-                f"scenario {self.scenario.name!r} declares context_keys "
-                f"{list(self.scenario.context_keys)}, but its setup_fn returned "
+                f"scenario {self.scenario.name!r} declares context variables "
+                f"{[c.name for c in declared]}, but its setup_fn returned "
                 f"{sorted(setup.context)}; missing {missing}"
             )
+        for target in declared:
+            value = setup.context[target.name]
+            if not target.spec.low <= value <= target.spec.high:
+                raise ValueError(
+                    f"scenario {self.scenario.name!r} drew {target.name}={value}, "
+                    f"outside its declared range [{target.spec.low}, {target.spec.high}]"
+                )
         self._context = dict(setup.context)
         self.simulator.reset(
             self.scenario.aircraft, setup.initial_conditions, self._steps_per_action

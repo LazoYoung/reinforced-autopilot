@@ -55,6 +55,8 @@ every episode while a seeded run stays exactly reproducible.
 not required to derive from it: a hold task points the target at the start, a
 "go to" task draws the two independently. Reaches the observation features, the
 reward function, and `info["context"]`.
+A scenario declares each target as a `ContextVariable`: its name, unit, and the
+range `setup_fn` draws it from, which is the range a policy is trained on.
 
 **Registry** — `aero_gym.registry`, which resolves a scenario name to its
 builder. A scenario registers itself with `@scenario("name", params=...)`; there

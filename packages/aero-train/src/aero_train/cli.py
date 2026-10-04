@@ -143,6 +143,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         metadata={
             "aero.config": json.dumps(payload["config"], sort_keys=True),
             "aero.frames": str(int(payload["frames"])),
+            "aero.scenario": cfg.env.scenario,
         },
     )
     print(f"wrote {output}: {report.steps} steps checked, {report.flips} near-tie flips")

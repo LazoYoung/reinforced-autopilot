@@ -55,20 +55,22 @@ def test_readings_come_in_observation_order_whatever_order_the_features_read_the
     assert [p.name for p in traced.inputs][:4] == ["altitude", "heading", "roll", "pitch"]
 
 
-def test_each_port_carries_its_unit_range_and_meaning():
+def test_each_column_carries_its_role_unit_range_and_meaning():
     traced = trace_scenario(toy_scenario())
     docs = {p.name: p.doc for p in (*traced.inputs, *traced.actions)}
     assert docs["altitude"] == "ft, -1500 to 85000: altitude above mean sea level"
     assert docs["target_altitude_ft"] == "ft, 4800 to 5200: altitude to hold"
     assert docs["throttle"] == "norm, 0 to 1: 0 = idle, 1 = full throttle"
     assert [p.name for p in traced.actions] == ["elevator", "aileron", "throttle"]
+    assert [p.role for p in traced.inputs] == ["reading"] * 4 + ["target"] * 2
+    assert {p.role for p in traced.actions} == {"command"}
 
 
-def test_the_metadata_names_the_rate_the_aircraft_and_the_scenario():
+def test_the_metadata_names_the_rate_and_the_aircraft():
+    """Not the scenario: the registry key is the checkpoint's to give."""
     assert trace_scenario(toy_scenario()).metadata == {
         "aero.agent_hz": "10.0",
         "aero.aircraft": "c172p",
-        "aero.scenario": "toy-hold",
     }
 
 

@@ -23,11 +23,33 @@ FeatureFn = Callable[[Mapping[Any, Column], Mapping[str, Column]], Column]
 
 
 @dataclass(frozen=True)
-class Port:
-    """One named input or output of a policy file, and the doc string it carries."""
+class ColumnSpec:
+    """One named input or output of a policy file: what it is, in which unit and range.
+
+    `role` is one of reading, target, prev, command or value; a value column has
+    no unit or range. `doc` is the ONNX doc string a person reads, and `entry()`
+    the same facts as aero.inputs and aero.outputs carry them for a host.
+    """
 
     name: str
-    doc: str
+    role: str
+    description: str
+    unit: str | None = None
+    low: float | None = None
+    high: float | None = None
+
+    @property
+    def doc(self) -> str:
+        if self.unit is None:
+            return self.description
+        return f"{self.unit}, {self.low:g} to {self.high:g}: {self.description}"
+
+    def entry(self) -> dict[str, Any]:
+        """This column's aero.inputs or aero.outputs entry."""
+        entry: dict[str, Any] = {"role": self.role, "description": self.description}
+        if self.unit is not None:
+            entry |= {"unit": self.unit, "low": self.low, "high": self.high}
+        return entry
 
 
 class FeatureModule(nn.Module):
@@ -69,12 +91,12 @@ class TracedScenario:
     """Everything a policy file takes from its scenario: one module, the rest plain data."""
 
     features: FeatureModule
-    inputs: tuple[Port, ...]
+    inputs: tuple[ColumnSpec, ...]
     """The readings, then the targets: the order `features` takes them in."""
-    actions: tuple[Port, ...]
-    """One per action variable, in the action Box's order."""
+    actions: tuple[ColumnSpec, ...]
+    """One command column per action variable, in the action Box's order."""
     metadata: dict[str, str]
-    """aero.agent_hz, aero.aircraft and aero.scenario."""
+    """aero.agent_hz and aero.aircraft."""
     readings: tuple[Any, ...]
     """The FlightVariables the features read, in observation_variables order."""
     targets: tuple[str, ...]
@@ -126,21 +148,22 @@ def trace_scenario(scenario: Any) -> TracedScenario:
             [f.spec.low for f in features],
             [f.spec.high for f in features],
         ),
-        inputs=tuple(Port(v.value, _doc(OBSERVATION_SPECS[v])) for v in readings)
-        + tuple(Port(name, _doc(declared[name])) for name in targets),
-        actions=tuple(Port(v.value, _doc(ACTION_SPECS[v])) for v in scenario.action_variables),
+        inputs=tuple(_column(v.value, "reading", OBSERVATION_SPECS[v]) for v in readings)
+        + tuple(_column(name, "target", declared[name]) for name in targets),
+        actions=tuple(
+            _column(v.value, "command", ACTION_SPECS[v]) for v in scenario.action_variables
+        ),
         metadata={
             "aero.agent_hz": str(scenario.agent_hz),
             "aero.aircraft": scenario.aircraft,
-            "aero.scenario": scenario.name,
         },
         readings=readings,
         targets=targets,
     )
 
 
-def _doc(spec: Any) -> str:
-    return f"{spec.unit}, {spec.low:g} to {spec.high:g}: {spec.description}"
+def _column(name: str, role: str, spec: Any) -> ColumnSpec:
+    return ColumnSpec(name, role, spec.description, spec.unit, float(spec.low), float(spec.high))
 
 
 class _Unavailable(KeyError):

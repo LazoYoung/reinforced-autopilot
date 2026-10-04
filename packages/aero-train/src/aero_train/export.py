@@ -11,6 +11,7 @@ functions.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 import warnings
@@ -25,7 +26,7 @@ from torch import nn
 
 from .algo.base import Algorithm
 from .envs.delta import DeltaAction
-from .envs.features import Port, TracedScenario, scenario_of, trace_scenario
+from .envs.features import ColumnSpec, TracedScenario, scenario_of, trace_scenario
 from .envs.scale import ScaleObservation
 from .tensors import Column, column_shapes, example_columns
 
@@ -35,8 +36,13 @@ VALUE_ATOL = 1e-5
 COMMAND_ATOL = 1e-6
 CHECK_MAX_STEPS = 2000
 
-VALUE = Port(
-    "value", "the policy's estimate of this state's worth, comparable only within this file"
+CHECKPOINT_METADATA = ("aero.config", "aero.frames", "aero.scenario")
+"""What only the checkpoint knows, so the caller of export_policy supplies it."""
+OWN_METADATA = ("aero.format", "aero.agent_hz", "aero.aircraft", "aero.inputs", "aero.outputs")
+"""What export_policy writes itself, which a caller may not overwrite."""
+
+VALUE = ColumnSpec(
+    "value", "value", "the policy's estimate of this state's worth, comparable only within this file"
 )
 
 
@@ -90,12 +96,18 @@ def export_policy(
     """Write `algo`'s greedy policy for `env_fn`'s scenario to `path`, checked.
 
     `env_fn` builds the env the policy was trained through; `metadata` adds
-    what only the checkpoint knows (aero.config, aero.frames). The file is
+    what only the checkpoint knows (CHECKPOINT_METADATA). The file is
     written beside `path` and renamed into place only once the check passes,
     so a failure leaves any earlier file untouched. Traces the scenario code
     in the current checkout, so export a checkpoint with the code it was
     trained on.
     """
+    missing = [key for key in CHECKPOINT_METADATA if key not in metadata]
+    if missing:
+        raise ValueError(f"export_policy needs metadata {missing}, which only the checkpoint knows")
+    clashing = [key for key in OWN_METADATA if key in metadata]
+    if clashing:
+        raise ValueError(f"export_policy writes {clashing} itself; do not pass them as metadata")
     _require_onnx()
     policy = algo.policy_module()
     path = Path(path)
@@ -151,8 +163,8 @@ def check_policy_file(
         prev = delta.command
         feed = {name: np.array([v], np.float32) for name, v in traced.feed(info).items()}
         feed |= {
-            f"prev.{port.name}": np.array([c], np.float32)
-            for port, c in zip(traced.actions, prev)
+            f"prev.{column.name}": np.array([c], np.float32)
+            for column, c in zip(traced.actions, prev)
         }
         got = {name: float(v[0]) for name, v in zip(outputs, session.run(None, feed))}
         with torch.no_grad():
@@ -171,17 +183,18 @@ def check_policy_file(
             high[:, None],
         )
         flipped = False
-        for axis, port in enumerate(traced.actions):
-            if abs(got[port.name] - expected[axis]) <= COMMAND_ATOL:
+        for axis, column in enumerate(traced.actions):
+            name = column.name
+            if abs(got[name] - expected[axis]) <= COMMAND_ATOL:
                 continue
-            if np.abs(reachable[axis] - got[port.name]).min() > COMMAND_ATOL:
+            if np.abs(reachable[axis] - got[name]).min() > COMMAND_ATOL:
                 raise PolicyCheckError(
-                    f"step {steps}: {port.name} expected {expected[axis]:.6g}, got "
-                    f"{got[port.name]:.6g}, which no action reaches from "
-                    f"prev.{port.name} {prev[axis]:.6g}"
+                    f"step {steps}: {name} expected {expected[axis]:.6g}, got "
+                    f"{got[name]:.6g}, which no action reaches from "
+                    f"prev.{name} {prev[axis]:.6g}"
                 )
             flipped = True
-            first_flip = first_flip or (steps, port.name, float(expected[axis]), got[port.name])
+            first_flip = first_flip or (steps, name, float(expected[axis]), got[name])
         flips += int(flipped)
         steps += 1
         done = terminated or truncated
@@ -203,7 +216,14 @@ def _write(
     import onnx
 
     prev = tuple(
-        Port(f"prev.{a.name}", f"{a.doc}; the command applied now, read back every call")
+        ColumnSpec(
+            f"prev.{a.name}",
+            "prev",
+            f"{a.description}; the command applied now, read back every call",
+            a.unit,
+            a.low,
+            a.high,
+        )
         for a in traced.actions
     )
     inputs = (*traced.inputs, *prev)
@@ -228,7 +248,11 @@ def _write(
     docs = {p.name: p.doc for p in (*inputs, *outputs)}
     for column in (*model.graph.input, *model.graph.output):
         column.doc_string = docs[column.name]
-    for key, value in {"aero.format": FORMAT, **traced.metadata, **metadata}.items():
+    columns = {
+        "aero.inputs": json.dumps({c.name: c.entry() for c in inputs}, allow_nan=False),
+        "aero.outputs": json.dumps({c.name: c.entry() for c in outputs}, allow_nan=False),
+    }
+    for key, value in {"aero.format": FORMAT, **traced.metadata, **columns, **metadata}.items():
         model.metadata_props.append(onnx.StringStringEntryProto(key=key, value=value))
     onnx.save(model, str(path), save_as_external_data=False)
     onnx.checker.check_model(str(path), full_check=True)

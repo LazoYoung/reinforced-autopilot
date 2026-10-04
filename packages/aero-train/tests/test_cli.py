@@ -426,6 +426,7 @@ def toy_checkpoint(monkeypatch, tmp_path):
 
 def test_export_writes_beside_the_checkpoint_and_says_what_it_checked(toy_checkpoint, capsys):
     import onnx
+    from aero_gym.registry import build_scenario
 
     assert cli.main(["export", str(toy_checkpoint)]) == 0
     written = toy_checkpoint.with_suffix(".onnx")
@@ -434,6 +435,9 @@ def test_export_writes_beside_the_checkpoint_and_says_what_it_checked(toy_checkp
     # Through JSON on both sides: the checkpoint keeps tuples, JSON reads back lists.
     assert json.loads(meta["aero.config"]) == json.loads(json.dumps(config))
     assert meta["aero.frames"] == "7"
+    assert meta["aero.scenario"] == "steady_flight"
+    params = json.loads(meta["aero.config"])["env"]["params"]
+    assert build_scenario(meta["aero.scenario"], params).name == "steady-flight"
     assert "steps checked" in capsys.readouterr().out
 
 

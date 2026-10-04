@@ -19,7 +19,7 @@ from aero_train.envs.features import scenario_of, trace_scenario
 from aero_train.export import PolicyCheckError, check_policy_file, export_policy
 from tests.flight_fakes import N_ACTIONS, N_FEATURES, toy_env_fn, toy_scenario
 
-META = {"aero.config": json.dumps({"seed": 0}), "aero.frames": "0"}
+META = {"aero.config": json.dumps({"seed": 0}), "aero.frames": "0", "aero.scenario": "toy_hold"}
 
 
 def _dqn() -> DQN:
@@ -70,13 +70,37 @@ def test_each_column_documents_itself_and_the_file_carries_its_metadata(exported
     assert docs["target_altitude_ft"] == "ft, 4800 to 5200: altitude to hold"
     assert docs["prev.throttle"].startswith("norm, 0 to 1: 0 = idle, 1 = full throttle;")
     assert docs["value"].startswith("the policy's estimate")
-    assert {p.key: p.value for p in model.metadata_props} == {
-        "aero.format": "1",
-        "aero.agent_hz": "10.0",
-        "aero.aircraft": "c172p",
-        "aero.scenario": "toy-hold",
-        **META,
+    meta = {p.key: p.value for p in model.metadata_props}
+    assert sorted(meta) == sorted(
+        ["aero.format", "aero.agent_hz", "aero.aircraft", "aero.inputs", "aero.outputs", *META]
+    )
+    assert meta["aero.format"] == "1"
+    assert meta["aero.agent_hz"] == "10.0"
+    assert meta["aero.aircraft"] == "c172p"
+    assert {key: meta[key] for key in META} == META
+
+
+def test_the_metadata_tells_a_host_each_columns_role_unit_and_range(exported):
+    """What a mode control panel needs: which inputs are targets, and their dials' range."""
+    _, path, _ = exported
+    model = onnx.load(str(path))
+    meta = {p.key: p.value for p in model.metadata_props}
+    inputs, outputs = json.loads(meta["aero.inputs"]), json.loads(meta["aero.outputs"])
+    assert list(inputs) == [c.name for c in model.graph.input]
+    assert list(outputs) == [c.name for c in model.graph.output]
+    assert inputs["target_altitude_ft"] == {
+        "role": "target", "unit": "ft", "low": 4800.0, "high": 5200.0,
+        "description": "altitude to hold",
     }
+    assert inputs["altitude"]["role"] == "reading"
+    assert (inputs["altitude"]["low"], inputs["altitude"]["high"]) == (-1500.0, 85000.0)
+    assert inputs["prev.throttle"] | {"description": ""} == {
+        "role": "prev", "unit": "norm", "low": 0.0, "high": 1.0, "description": "",
+    }
+    assert outputs["elevator"]["role"] == "command"
+    assert (outputs["elevator"]["low"], outputs["elevator"]["high"]) == (-1.0, 1.0)
+    assert set(outputs["value"]) == {"role", "description"}
+    assert outputs["value"]["role"] == "value"
 
 
 def test_the_file_runs_on_any_batch_size(exported):
@@ -208,6 +232,25 @@ def test_a_policy_without_the_stepping_wrapper_is_refused(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("key", ["aero.config", "aero.frames", "aero.scenario"])
+def test_export_needs_what_only_the_checkpoint_knows(tmp_path, key):
+    def no_env():
+        raise AssertionError("no env should be built")
+
+    metadata = {k: v for k, v in META.items() if k != key}
+    with pytest.raises(ValueError, match=key):
+        export_policy(tmp_path / "p.onnx", _dqn(), no_env, seed=0, metadata=metadata)
+
+
+@pytest.mark.parametrize("key", ["aero.format", "aero.agent_hz", "aero.inputs"])
+def test_export_refuses_metadata_it_writes_itself(tmp_path, key):
+    def no_env():
+        raise AssertionError("no env should be built")
+
+    with pytest.raises(ValueError, match=key):
+        export_policy(tmp_path / "p.onnx", _dqn(), no_env, seed=0, metadata=META | {key: "x"})
+
+
 def test_missing_onnx_packages_name_the_extra(tmp_path, monkeypatch):
     real = export.importlib.util.find_spec
     monkeypatch.setattr(
@@ -217,3 +260,23 @@ def test_missing_onnx_packages_name_the_extra(tmp_path, monkeypatch):
     )
     with pytest.raises(ModuleNotFoundError, match=r"onnxscript.*aero-train\[export\]"):
         export_policy(tmp_path / "p.onnx", _dqn(), toy_env_fn(), seed=0, metadata=META)
+
+
+def test_a_target_that_never_varied_reaches_the_host_as_a_one_value_range(tmp_path):
+    """Zero jitter declares low == high; a host must see exactly that, not a guess."""
+    from aero_gym.scenario import ObservationFeature
+    from aero_gym.variables import FlightVariable as V, VariableSpec
+
+    base = toy_scenario()
+    airspeed_error = ObservationFeature(
+        "airspeed_error_kts",
+        VariableSpec("kt", -20.0, 20.0, "airspeed minus target"),
+        lambda obs, ctx: obs[V.AIRSPEED] - ctx["target_airspeed_kts"],
+    )
+    scenario = toy_scenario(observation_features=base.observation_features + (airspeed_error,))
+    algo = DQN((N_FEATURES + 1,), N_ACTIONS, DQNConfig(hidden_sizes=(16, 16)), seed=0)
+    path = tmp_path / "p.onnx"
+    export_policy(path, algo, toy_env_fn(scenario), seed=0, metadata=META)
+    meta = {p.key: p.value for p in onnx.load(str(path)).metadata_props}
+    target = json.loads(meta["aero.inputs"])["target_airspeed_kts"]
+    assert (target["role"], target["low"], target["high"]) == ("target", 100.0, 100.0)

@@ -12,17 +12,21 @@ Before keeping the file, export flies one greedy episode with it beside the
 checkpoint. A failed check leaves no policy file (an existing file is
 untouched), though it may leave behind a directory it just created.
 
-Export traces the scenario code in the current checkout: export a checkpoint
-with the code it was trained on. The check compares the file with that code,
-not with the code at training time, so a checkpoint exported after its
-scenario's features changed can still pass with a different file.
+Export also refuses a checkpoint whose scenario changed after training.
+Training records a fingerprint of the scenario in every checkpoint: its
+variables, each feature's and each target's range, and each feature's values on
+fixed probe inputs. Export compares it with the scenario code in the current
+checkout and names the first difference. A checkpoint written before
+fingerprints existed is refused too, unless you pass `--unverified-scenario`;
+the file then reflects today's scenario code.
 
 ## Inputs and outputs
 
 Every input and output is a float32 tensor of shape `[batch]`, in the
 [canonical units](../README.md#canonical-units) and the pilot sign convention.
 Each input's and each action output's ONNX doc string gives its unit, range
-and meaning.
+and meaning for a person reading the file; a host reads the same facts from
+`aero.inputs` and `aero.outputs` (below).
 
 | Name | Direction | Meaning |
 |---|---|---|
@@ -50,16 +54,41 @@ feeding it back adds that trim a second time.
 | `aero.format` | `1` |
 | `aero.agent_hz` | how often to call the file, in Hz |
 | `aero.aircraft` | the JSBSim model the policy was trained on |
-| `aero.scenario` | the scenario's name |
+| `aero.scenario` | the key the scenario is registered under; with `aero.config`'s `env.params` it rebuilds the scenario |
 | `aero.config` | the full training config, as JSON |
 | `aero.frames` | how many frames the checkpoint had trained on |
+| `aero.inputs` | each input's role, unit and range, as JSON |
+| `aero.outputs` | the same for each output |
+
+`aero.inputs` and `aero.outputs` are JSON objects keyed by column name. Each
+entry has a `role` and a `description`, and every column except `value` has a
+`unit`, `low` and `high`:
+
+| `role` | Columns | `low` and `high` |
+|---|---|---|
+| `reading` | each flight variable | its canonical bounds |
+| `target` | each target | the range the policy was trained on |
+| `prev` | each `prev.<action>` | the action's bounds |
+| `command` | each action output | the action's bounds |
+| `value` | `value` | none |
+
+```json
+{"target_altitude_ft": {"role": "target", "unit": "ft", "low": 4800.0,
+  "high": 5200.0, "description": "altitude to hold, MSL"}}
+```
+
+Find a host's dials by `role`, not by name.
 
 `aero.format` covers the naming rules, the `[batch]` float32 shapes, the
-meaning of `prev.*`, and the clipped outputs. A change to any of them bumps it.
+meaning of `prev.*`, the clipped outputs, and the roles and fields of
+`aero.inputs` and `aero.outputs`. A change to any of them bumps it; a new field
+does not.
 
 ## Flying it
 
 ```python
+import json
+
 import numpy as np
 import onnxruntime as ort
 
@@ -82,6 +111,8 @@ def tick(session, readings, targets, applied):
 
 session = ort.InferenceSession("best.onnx")
 hz = float(session.get_modelmeta().custom_metadata_map["aero.agent_hz"])
+inputs = json.loads(session.get_modelmeta().custom_metadata_map["aero.inputs"])
+dials = {n: (c["low"], c["high"]) for n, c in inputs.items() if c["role"] == "target"}
 # call tick every 1 / hz seconds, holding each command between calls
 ```
 
@@ -95,6 +126,7 @@ hz = float(session.get_modelmeta().custom_metadata_map["aero.agent_hz"])
 - **Modes are files.** One file serves one combination of targets and axes;
   switch modes by switching files. Each file's names say what it takes and
   what it drives, and the `prev.*` read-back keeps the switch bumpless.
-- **Stay in range.** Clamp each target to the range its doc string gives. A
-  hold policy holds; capturing a distant target needs a policy trained for it.
+- **Stay in range.** Clamp each target to its `low` and `high` in
+  `aero.inputs`. A hold policy holds; capturing a distant target needs a
+  policy trained for it.
 - **Call at `aero.agent_hz`**, holding each command between calls.

@@ -6,8 +6,15 @@ lets the whole learning stack be tested against CartPole.
 """
 
 from .factory import make_env_fn
+from .fingerprint import Fingerprint, fingerprint_difference, scenario_fingerprint
 
-__all__ = ["make_env_fn", "observation_saturation_report"]
+__all__ = [
+    "Fingerprint",
+    "fingerprint_difference",
+    "make_env_fn",
+    "observation_saturation_report",
+    "scenario_fingerprint",
+]
 
 
 def observation_saturation_report() -> str:

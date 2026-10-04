@@ -23,6 +23,7 @@ from aero_gym.scenario import (
 )
 from aero_gym.simulator import Simulator
 from aero_gym.variables import FlightVariable as V, VariableSpec
+from aero_train.envs import Fingerprint, scenario_fingerprint
 from aero_train.envs.delta import DeltaAction
 from aero_train.envs.scale import ScaleObservation
 
@@ -148,3 +149,24 @@ def toy_env_fn(scenario: Scenario | None = None) -> Callable[[], gym.Env]:
         )
 
     return make
+
+
+def flipped_toy_scenario() -> Scenario:
+    """The toy task with its altitude error's sign flipped and nothing else:
+    same names, same bounds, so only a changed feature body tells them apart."""
+    features = list(toy_scenario().observation_features)
+    features[0] = ObservationFeature(
+        "altitude_error_ft",
+        features[0].spec,
+        lambda obs, ctx: ctx["target_altitude_ft"] - obs[V.ALTITUDE],
+    )
+    return toy_scenario(observation_features=tuple(features))
+
+
+def toy_fingerprint(scenario: Scenario | None = None) -> Fingerprint:
+    """The fingerprint `autopilot train` would store for the toy task."""
+    env = toy_env_fn(scenario)()
+    try:
+        return scenario_fingerprint(env)
+    finally:
+        env.close()

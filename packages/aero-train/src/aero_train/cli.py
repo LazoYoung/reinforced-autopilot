@@ -8,7 +8,7 @@ import json
 import os
 import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -31,7 +31,7 @@ from .trainer import Trainer, evaluate_policy
 
 
 @contextmanager
-def _probe(env_fn) -> Iterator[gym.Env]:
+def _probe(env_fn) -> Generator[gym.Env]:
     """One throwaway env, for its spaces and its scenario, before anything is built."""
     env = env_fn()
     try:
@@ -184,9 +184,8 @@ def cmd_export(args: argparse.Namespace) -> int:
         if _verified(payload, probe, "export") is None:
             if not args.unverified_scenario:
                 raise ValueError(
-                    "this checkpoint has no scenario fingerprint (its run started before fingerprints existed), so "
-                    "export cannot tell whether its scenario changed since training; "
-                    "pass --unverified-scenario to export it with today's scenario code"
+                    "checkpoint has no scenario fingerprint; "
+                    "pass --unverified-scenario to export with today's scenario code"
                 )
             print(
                 "warning: no scenario fingerprint to check; the file reflects today's "

@@ -148,6 +148,9 @@ def check_policy_file(
     no near-tie explains, or after the episode ends if flips exceeded
     max(1, steps // 100).
     """
+    # Read when onnxruntime loads; its telemetry upload thread can abort the
+    # process at exit (libc++ "recursive_mutex lock failed").
+    os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
     import onnxruntime as ort
 
     delta, _ = _layers(env)

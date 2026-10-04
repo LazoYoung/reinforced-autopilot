@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import gymnasium as gym
 import numpy as np
@@ -280,3 +281,19 @@ def test_a_target_that_never_varied_reaches_the_host_as_a_one_value_range(tmp_pa
     meta = {p.key: p.value for p in onnx.load(str(path)).metadata_props}
     target = json.loads(meta["aero.inputs"])["target_airspeed_kts"]
     assert (target["role"], target["low"], target["high"]) == ("target", 100.0, 100.0)
+
+
+
+def test_the_check_turns_off_onnxruntime_telemetry(exported, monkeypatch):
+    """Its upload thread can abort the process at exit, after the file is written."""
+    _, path, _ = exported
+    monkeypatch.delenv("ORT_DISABLE_TELEMETRY", raising=False)
+    _check(path, _dqn().policy_module())
+    assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"
+
+
+def test_the_check_keeps_a_telemetry_setting_the_caller_chose(exported, monkeypatch):
+    _, path, _ = exported
+    monkeypatch.setenv("ORT_DISABLE_TELEMETRY", "0")
+    _check(path, _dqn().policy_module())
+    assert os.environ["ORT_DISABLE_TELEMETRY"] == "0"

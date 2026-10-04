@@ -16,7 +16,7 @@ Export also refuses a checkpoint whose scenario changed after training.
 Training records a fingerprint of the scenario in every checkpoint: its
 variables, each feature's and each target's range, and each feature's values on
 fixed probe inputs. Export compares it with the scenario code in the current
-checkout and names the first difference. A checkpoint written before
+checkout and names the first difference. A checkpoint from a run started before
 fingerprints existed is refused too, unless you pass `--unverified-scenario`;
 the file then reflects today's scenario code.
 

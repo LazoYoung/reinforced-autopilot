@@ -41,6 +41,7 @@ def _probe(env_fn) -> Iterator[gym.Env]:
 
 
 def _spaces(env_fn) -> tuple[gym.Space, gym.Space]:
+    """The observation and action spaces `env_fn` builds."""
     with _probe(env_fn) as env:
         return env.observation_space, env.action_space
 
@@ -79,6 +80,12 @@ def _train(cfg: TrainConfig, resume_from: dict | None = None) -> int:
             if resume_from is None
             else _verified(resume_from, probe, "resume")
         )
+        if resume_from is not None and fingerprint is None and scenario_fingerprint(probe):
+            print(
+                "note: this checkpoint carries no scenario fingerprint, so its checkpoints "
+                "stay unverified and export will need --unverified-scenario",
+                file=sys.stderr,
+            )
     algo = build_algorithm(cfg, obs_space, act_space)
     frames = 0
     best_return = float("-inf")
@@ -177,7 +184,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         if _verified(payload, probe, "export") is None:
             if not args.unverified_scenario:
                 raise ValueError(
-                    "this checkpoint has no scenario fingerprint (it predates them), so "
+                    "this checkpoint has no scenario fingerprint (its run started before fingerprints existed), so "
                     "export cannot tell whether its scenario changed since training; "
                     "pass --unverified-scenario to export it with today's scenario code"
                 )

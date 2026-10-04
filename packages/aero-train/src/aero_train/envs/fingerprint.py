@@ -34,13 +34,12 @@ def scenario_fingerprint(env: gym.Env) -> Fingerprint | None:
     range) with every feature's unclipped value on each, from the float path.
     The probe is what catches a changed feature body.
     """
-    from aero_gym import AeroGymEnv
+    declared = _declarations(env)
+    if declared is None:
+        return None
+    scenario = env.unwrapped.scenario
     from aero_gym.variables import OBSERVATION_SPECS
 
-    base = env.unwrapped
-    if not isinstance(base, AeroGymEnv):
-        return None
-    scenario = base.scenario
     rng = np.random.default_rng(PROBE_SEED)
     inputs = {
         var.value: rng.uniform(
@@ -52,17 +51,7 @@ def scenario_fingerprint(env: gym.Env) -> Fingerprint | None:
         c.name: rng.uniform(c.spec.low, c.spec.high, PROBE_ROWS).tolist()
         for c in scenario.context_variables
     }
-    return {
-        "version": FINGERPRINT_VERSION,
-        "aircraft": scenario.aircraft,
-        "agent_hz": float(scenario.agent_hz),
-        "observation_variables": [v.value for v in scenario.observation_variables],
-        "action_variables": [v.value for v in scenario.action_variables],
-        "action_steps": _action_steps(env),
-        "features": [_declared(f.name, f.spec) for f in scenario.observation_features],
-        "context_variables": [_declared(c.name, c.spec) for c in scenario.context_variables],
-        "probe": {"inputs": inputs, "values": _evaluate(scenario, inputs)},
-    }
+    return {**declared, "probe": {"inputs": inputs, "values": _evaluate(scenario, inputs)}}
 
 
 def fingerprint_difference(stored: Fingerprint, env: gym.Env) -> str | None:
@@ -71,7 +60,7 @@ def fingerprint_difference(stored: Fingerprint, env: gym.Env) -> str | None:
     Declarations are compared exactly. The probe is compared by running today's
     features on the stored probe rows, to PROBE_RTOL.
     """
-    current = scenario_fingerprint(env)
+    current = _declarations(env)
     if current is None:
         return "the env has no aero_gym scenario"
     if stored.get("version") != FINGERPRINT_VERSION:
@@ -101,6 +90,26 @@ def fingerprint_difference(stored: Fingerprint, env: gym.Env) -> str | None:
     return None
 
 
+def _declarations(env: gym.Env) -> Fingerprint | None:
+    """Everything in the fingerprint but its probe, or None for a Gymnasium env."""
+    from aero_gym import AeroGymEnv
+
+    base = env.unwrapped
+    if not isinstance(base, AeroGymEnv):
+        return None
+    scenario = base.scenario
+    return {
+        "version": FINGERPRINT_VERSION,
+        "aircraft": scenario.aircraft,
+        "agent_hz": float(scenario.agent_hz),
+        "observation_variables": [v.value for v in scenario.observation_variables],
+        "action_variables": [v.value for v in scenario.action_variables],
+        "action_steps": _action_steps(env),
+        "features": [_declared(f.name, f.spec) for f in scenario.observation_features],
+        "context_variables": [_declared(c.name, c.spec) for c in scenario.context_variables],
+    }
+
+
 def _declared(name: str, spec: Any) -> dict[str, Any]:
     return {"name": name, "unit": spec.unit, "low": float(spec.low), "high": float(spec.high)}
 
@@ -119,12 +128,53 @@ def _action_steps(env: gym.Env) -> list[float] | None:
     return None
 
 
+class _Unread(ValueError):
+    """A feature read a key its probe row does not hold."""
+
+
+class _Row(Mapping):
+    """One probe row by key, naming the feature that reads a key it was not given."""
+
+    def __init__(self, feature: str, values: Mapping[Any, float], why: str) -> None:
+        self._feature, self._values, self._why = feature, values, why
+
+    def __getitem__(self, key: Any) -> float:
+        if key not in self._values:
+            raise _Unread(
+                f"{self._feature} reads {getattr(key, 'value', key)!r}, which {self._why}"
+            )
+        return self._values[key]
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+
 def _evaluate(scenario: Any, inputs: Mapping[str, Sequence[float]]) -> dict[str, list[float]]:
-    """Every feature's value on every probe row, as the env computes it."""
+    """Every feature's value on every probe row, as the env computes it.
+
+    Raises ValueError naming the feature when it reads a key the scenario does
+    not give it or fails on a row.
+    """
     values: dict[str, list[float]] = {f.name: [] for f in scenario.observation_features}
     for row in range(PROBE_ROWS):
-        obs = {var: inputs[var.value][row] for var in scenario.observation_variables}
-        context = {c.name: inputs[c.name][row] for c in scenario.context_variables}
+        readings = {var: inputs[var.value][row] for var in scenario.observation_variables}
+        targets = {c.name: inputs[c.name][row] for c in scenario.context_variables}
         for feature in scenario.observation_features:
-            values[feature.name].append(float(feature.fn(obs, context)))
+            obs = _Row(feature.name, readings, "the scenario does not observe")
+            context = _Row(
+                feature.name, targets, "the scenario does not declare in context_variables"
+            )
+            try:
+                values[feature.name].append(float(feature.fn(obs, context)))
+            except _Unread:
+                raise
+            except Exception as exc:
+                raise _cannot(feature.name, row, exc) from exc
     return values
+
+
+def _cannot(name: str, row: int, exc: Exception) -> ValueError:
+    return ValueError(f"{name} cannot be fingerprinted on probe row {row}: {exc}")

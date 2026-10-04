@@ -548,11 +548,11 @@ def test_resume_refuses_a_scenario_whose_feature_changed(toy_run):
     from tests.flight_fakes import flipped_toy_scenario
 
     latest, set_scenario = toy_run
-    before = load_checkpoint(latest)
+    before = latest.read_bytes()
     set_scenario(flipped_toy_scenario())
     with pytest.raises(ValueError, match=r"cannot resume.*altitude_error_ft changed"):
         cli.main(["resume", str(latest), "--total-steps", "128"])
-    assert load_checkpoint(latest)["frames"] == before["frames"]
+    assert latest.read_bytes() == before
 
 
 def test_resume_accepts_a_reward_change_and_keeps_the_fingerprint(toy_run):
@@ -566,7 +566,7 @@ def test_resume_accepts_a_reward_change_and_keeps_the_fingerprint(toy_run):
     assert payload["scenario_fingerprint"] == toy_fingerprint()
 
 
-def test_a_resumed_checkpoint_without_a_fingerprint_stays_without_one(toy_run):
+def test_a_resumed_checkpoint_without_a_fingerprint_stays_without_one(toy_run, capsys):
     """Resume must not vouch for a scenario nobody recorded at training time."""
     latest, _ = toy_run
     payload = load_checkpoint(latest)
@@ -574,6 +574,14 @@ def test_a_resumed_checkpoint_without_a_fingerprint_stays_without_one(toy_run):
     save_checkpoint(latest, payload)
     assert cli.main(["resume", str(latest), "--total-steps", "128"]) == 0
     assert load_checkpoint(latest)["scenario_fingerprint"] is None
+    assert "carries no scenario fingerprint" in capsys.readouterr().err
+
+
+def test_resuming_a_gymnasium_run_prints_no_fingerprint_note(config_path, tmp_path, capsys):
+    cli.main(["train", str(config_path)])
+    capsys.readouterr()
+    cli.main(["resume", str(tmp_path / "ckpt" / "latest.pt"), "--total-steps", "128"])
+    assert "fingerprint" not in capsys.readouterr().err
 
 
 def test_export_refuses_a_scenario_changed_since_training_and_writes_nothing(toy_run):
@@ -584,6 +592,15 @@ def test_export_refuses_a_scenario_changed_since_training_and_writes_nothing(toy
     with pytest.raises(ValueError, match=r"cannot export.*altitude_error_ft changed"):
         cli.main(["export", str(latest)])
     assert not latest.with_suffix(".onnx").exists()
+
+
+def test_export_accepts_a_reward_change(toy_run):
+    from tests.flight_fakes import toy_scenario
+
+    latest, set_scenario = toy_run
+    set_scenario(toy_scenario(reward_fn=lambda t: (0.5, False)))
+    assert cli.main(["export", str(latest)]) == 0
+    assert latest.with_suffix(".onnx").exists()
 
 
 def test_export_refuses_a_checkpoint_without_a_fingerprint_naming_the_flag(

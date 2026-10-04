@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 
 import gymnasium as gym
@@ -90,6 +91,45 @@ def test_the_probe_covers_every_feature_and_every_reading_and_target():
 def test_every_change_a_policy_file_would_carry_is_named(scenario, match):
     difference = _difference(toy_fingerprint(), scenario)
     assert difference is not None and re.search(match, difference), difference
+
+
+def test_a_feature_reading_an_undeclared_context_key_is_named():
+    feature = ObservationFeature(
+        "bad", VariableSpec("ft", -1.0, 1.0, "x"), lambda obs, ctx: ctx["target_vs_fpm"]
+    )
+    env = toy_env_fn(toy_scenario(observation_features=(feature,)))()
+    try:
+        with pytest.raises(
+            ValueError,
+            match="bad reads 'target_vs_fpm', which the scenario does not declare in context_variables",
+        ):
+            scenario_fingerprint(env)
+    finally:
+        env.close()
+
+
+def test_a_feature_that_fails_inside_the_canonical_box_is_named():
+    feature = ObservationFeature(
+        "root", VariableSpec("ft", 0.0, 100.0, "x"), lambda obs, ctx: math.sqrt(obs[V.ALTITUDE])
+    )
+    env = toy_env_fn(toy_scenario(observation_features=(feature,)))()
+    try:
+        with pytest.raises(
+            ValueError, match=r"root cannot be fingerprinted on probe row \d+: "
+        ) as raised:
+            scenario_fingerprint(env)
+        assert isinstance(raised.value.__cause__, ValueError)
+    finally:
+        env.close()
+
+
+def test_the_probe_is_not_clipped_to_a_features_bounds():
+    probe = toy_fingerprint()
+    for declared in probe["features"]:
+        values = probe["probe"]["values"][declared["name"]]
+        if min(values) < declared["low"] or max(values) > declared["high"]:
+            return
+    pytest.fail("no probe value lies beyond its feature's declared bounds")
 
 
 def test_a_reward_change_leaves_the_fingerprint_alone():

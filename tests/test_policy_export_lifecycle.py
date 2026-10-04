@@ -7,6 +7,8 @@ the exported file on exactly that read-back, beside the checkpoint's own path.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 import torch
@@ -74,8 +76,17 @@ def test_a_trained_policy_exports_and_flies_on_commands_read_back_from_the_simul
     assert "steps checked" in capsys.readouterr().out
 
     session = ort.InferenceSession(str(latest.with_suffix(".onnx")))
-    assert float(session.get_modelmeta().custom_metadata_map["aero.agent_hz"]) == 10.0
+    meta = session.get_modelmeta().custom_metadata_map
+    assert float(meta["aero.agent_hz"]) == 10.0
+    assert meta["aero.scenario"] == "steady_flight"
+    dials = {
+        name: (column["low"], column["high"])
+        for name, column in json.loads(meta["aero.inputs"]).items()
+        if column["role"] == "target"
+    }
+    assert dials["target_altitude_ft"] == (4800.0, 5200.0)
     payload = load_checkpoint(latest)
+    assert payload["scenario_fingerprint"] is not None
     cfg = config_from_dict(payload["config"])
     env = make_env_fn(cfg.env)()
     algo = build_algorithm(cfg, env.observation_space, env.action_space)

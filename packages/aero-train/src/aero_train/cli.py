@@ -172,7 +172,20 @@ def cmd_export(args: argparse.Namespace) -> int:
     # Headless and on the CPU: the check only flies an episode, so a stored
     # viewer or GPU setting must not make export launch FlightGear or need CUDA.
     env_fn = make_env_fn(dataclasses.replace(cfg.env, render_mode=None))
-    obs_space, act_space = _spaces(env_fn)
+    with _probe(env_fn) as probe:
+        obs_space, act_space = probe.observation_space, probe.action_space
+        if _verified(payload, probe, "export") is None:
+            if not args.unverified_scenario:
+                raise ValueError(
+                    "this checkpoint has no scenario fingerprint (it predates them), so "
+                    "export cannot tell whether its scenario changed since training; "
+                    "pass --unverified-scenario to export it with today's scenario code"
+                )
+            print(
+                "warning: no scenario fingerprint to check; the file reflects today's "
+                "scenario code, which may differ from the code this policy trained on",
+                file=sys.stderr,
+            )
     algo = build_algorithm(dataclasses.replace(cfg, device="cpu"), obs_space, act_space)
     algo.load_state_dict(payload["algo"])
     output = Path(args.output) if args.output else Path(args.checkpoint).with_suffix(".onnx")
@@ -275,6 +288,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="where to write it; default: the checkpoint's name with .onnx, beside it; "
         "an existing directory gets the checkpoint's name with .onnx inside it",
+    )
+    ex.add_argument(
+        "--unverified-scenario",
+        action="store_true",
+        help="export a checkpoint that has no scenario fingerprint, tracing today's code",
     )
     ex.set_defaults(func=cmd_export)
 
